@@ -1,0 +1,100 @@
+version: 5.0.0
+profile: default
+models:
+  dir: ./models
+  registry_file: models.json
+  use_subprocess: true
+  pool_size: 0
+generation:
+  default_max_tokens: 2048
+  default_temperature: 0.7
+  default_top_p: 0.9
+  default_top_k: 40
+  default_repeat_penalty: 1.1
+  auto_context: true
+  stream_chunk_size: 16
+  response_buffer: 2048
+  reasoning_buffer: 4096
+  tool_buffer: 1024
+context:
+  default_size: 4096
+  min_size: 2048
+  max_size: 131072
+  upsize_threshold: 0.9
+  downsize_threshold: 0.5
+  safety_margin: 512
+  auto_resize: true
+  min_downsize: 4096
+  tiers:
+  - 2048
+  - 4096
+  - 8192
+  - 16384
+  - 32768
+  - 65536
+  - 131072
+worker:
+  critical_timeout: 30.0
+  start_timeout: 10.0
+  idle_timeout: 3600
+  reuse_limit: 100
+  max_pool_size: 8
+gpu:
+  default_gpu_layers: -1
+  flash_attention: true
+  kv_cache_quantization: true
+  type_k: q4_0
+  type_v: q4_0
+cache:
+  token_max_size: 1000
+  template_max_size: 100
+  sequence_max_size: 500
+  disk_enabled: true
+  disk_dir: ~/.cache/llm_manager
+  ttl_seconds: 3600
+  cleanup_delay_success: 0.3
+  cleanup_delay_failure: 1.0
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file: null
+scanner:
+  test_context: false
+  min_context: 8192
+  max_context: 131072
+  kv_quant: true
+  flash_attn: true
+security:
+  allow_external_paths: false
+  max_model_size_mb: 100000
+  sandbox_workers: true
+estimation:
+  tokens_per_word_text: 1.3
+  tokens_per_word_code: 3.5
+  tokens_per_char_cjk: 1.5
+  template_overhead_per_message: 30
+  special_tokens_base: 50
+  image_tokens: 1000
+resource:
+  min_disk_space_mb: 100
+  batch_size_small: 1024
+  batch_size_medium: 512
+  batch_size_large: 256
+server:
+  enabled: true
+  host: 127.0.0.1
+  port: 8000
+  api_key: null
+  cors_origins:
+  - http://localhost:3000
+  - http://localhost:5173
+  - http://localhost:8080
+  - http://127.0.0.1:3000
+  - http://127.0.0.1:5173
+  - http://127.0.0.1:8080
+  request_timeout: 120.0
+  max_request_size_mb: 100
+  enable_docs: true
+  enable_metrics_endpoint: true
+  log_requests: true
+model_overrides: {}
