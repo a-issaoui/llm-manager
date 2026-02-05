@@ -42,7 +42,7 @@
 CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
 
 # Install from source
-git clone https://github.com/yourusername/llm-manager
+git clone https://github.com/a-issaoui/llm-manager
 cd llm-manager
 pip install -e .
 
