@@ -194,15 +194,25 @@ class ComprehensiveBenchmark:
         """Test reasoning capability."""
         start = time.time()
         try:
+            # Smaller models need more guidance
+            is_small_model = "smollm" in model.lower() or "1.7b" in model.lower()
+            
             # Use higher max_tokens for thinking models
             max_tokens = 512 if "think" in model.lower() or "nanbeige" in model.lower() else 256
             
+            # Adjust prompt for smaller models
+            if is_small_model:
+                prompt = "What is 15 + 27? Answer with just the number."
+                max_tokens = 128
+            else:
+                prompt = "Calculate 15 + 27 and give me just the final number."
+            
             response = await self.make_request(
                 session,
-                [{"role": "user", "content": "Calculate 15 + 27 and give me just the final number."}],
+                [{"role": "user", "content": prompt}],
                 model,
                 max_tokens=max_tokens,
-                temperature=0.3
+                temperature=0.1  # Lower temp for more deterministic answers
             )
             latency = (time.time() - start) * 1000
             usage = response.get("usage", {})
