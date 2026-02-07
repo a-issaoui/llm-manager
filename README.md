@@ -289,6 +289,47 @@ LLM Manager follows a **stateless architecture** like OpenAI's API:
 - **Request-scoped** - Each request is independent
 - **Scalable** - Easy to deploy multiple instances behind a load balancer
 
+## 🔬 Benchmarks
+
+### Comprehensive Benchmark
+
+Test all models with various tasks (reasoning, code, tools, context):
+
+```bash
+# Quick mode (4 models, ~3 minutes)
+python benchmark_comprehensive.py --quick
+
+# Full benchmark (6 models, ~5-7 minutes)
+python benchmark_comprehensive.py
+```
+
+Tests include:
+- ✅ Basic generation
+- ✅ Reasoning tasks (math, logic)
+- ✅ Code generation
+- ✅ Conversation context retention
+- ✅ Tool calling (on capable models)
+- ✅ Model hot-swapping
+
+### Agent Stress Test
+
+High-load benchmark simulating real agent workflows:
+
+```bash
+# Default: 5 workers for 300 seconds
+python benchmark_agent_stress_test.py
+
+# Custom duration and concurrency
+python benchmark_agent_stress_test.py --duration 600 --concurrency 10
+```
+
+Features tested:
+- Multiple concurrent requests
+- Rapid model switching
+- Long conversation contexts
+- Mixed task types
+- Stability under load
+
 ## 🧪 Examples
 
 See `examples/` directory for comprehensive examples using real models:
