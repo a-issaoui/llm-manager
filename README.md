@@ -193,8 +193,8 @@ asyncio.run(main())
 | `stream_options` | ✅ Full | `include_usage` support |
 | `tools` | ✅ Full | Function calling supported |
 | `tool_choice` | ✅ Full | Auto/none/function selection |
-| `n` | ⚠️ Limited | Only `n=1` supported |
-| `response_format` | ⚠️ Schema | Parsed but not enforced |
+| `n` | ⚠️ Limited | Only `n=1` supported (will error if > 1) |
+| `response_format` | ⚠️ Parsed only | Accepted in API but not used in generation |
 
 ### CLI Commands
 
