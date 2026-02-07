@@ -7,11 +7,12 @@ Provides a pool of WorkerProcess instances to handle multiple requests in parall
 import asyncio
 import logging
 import threading
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from queue import Queue
-from typing import List, Optional, ContextManager, AsyncContextManager
-from contextlib import contextmanager, asynccontextmanager
+from typing import Any
 
-from .workers import WorkerProcess, AsyncWorkerProcess
+from .workers import AsyncWorkerProcess, WorkerProcess
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,7 @@ class WorkerPool:
     Manages worker lifecycle and provides safe acquisition/release of workers.
     """
 
-    def __init__(
-        self,
-        size: int = 4,
-        idle_timeout: int = 3600
-    ):
+    def __init__(self, size: int = 4, idle_timeout: int = 3600):
         """
         Initialize worker pool.
 
@@ -39,8 +36,8 @@ class WorkerPool:
         """
         self.size = min(size, DEFAULT_POOL_SIZE)
         self.idle_timeout = idle_timeout
-        self._workers: List[WorkerProcess] = []
-        self._available_queue: Queue = Queue()
+        self._workers: list[WorkerProcess] = []
+        self._available_queue: Queue[WorkerProcess] = Queue()
         self._lock = threading.Lock()
         self._started = False
 
@@ -52,8 +49,9 @@ class WorkerPool:
             if self._started:
                 return
 
-            for i in range(self.size):
+            for _ in range(self.size):
                 worker = WorkerProcess(idle_timeout=self.idle_timeout)
+                worker.start()  # Start the subprocess
                 self._workers.append(worker)
                 self._available_queue.put(worker)
 
@@ -61,7 +59,7 @@ class WorkerPool:
             logger.info(f"Started WorkerPool with {self.size} workers")
 
     @contextmanager
-    def acquire(self) -> ContextManager[WorkerProcess]:
+    def acquire(self) -> Iterator[WorkerProcess]:
         """
         Acquire a worker from the pool.
 
@@ -95,7 +93,12 @@ class WorkerPool:
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         self.shutdown()
 
 
@@ -106,11 +109,7 @@ class AsyncWorkerPool:
     Provides non-blocking acquisition of workers for async operations.
     """
 
-    def __init__(
-        self,
-        size: int = 4,
-        idle_timeout: int = 3600
-    ):
+    def __init__(self, size: int = 4, idle_timeout: int = 3600):
         """
         Initialize async worker pool.
 
@@ -120,8 +119,8 @@ class AsyncWorkerPool:
         """
         self.size = min(size, DEFAULT_POOL_SIZE)
         self.idle_timeout = idle_timeout
-        self._workers: List[AsyncWorkerProcess] = []
-        self._available_queue: asyncio.Queue = asyncio.Queue()
+        self._workers: list[AsyncWorkerProcess] = []
+        self._available_queue: asyncio.Queue[AsyncWorkerProcess] = asyncio.Queue()
         self._lock = asyncio.Lock()
         self._started = False
 
@@ -133,8 +132,9 @@ class AsyncWorkerPool:
             if self._started:
                 return
 
-            for i in range(self.size):
+            for _ in range(self.size):
                 worker = AsyncWorkerProcess(idle_timeout=self.idle_timeout)
+                await worker.start()  # Start the subprocess
                 self._workers.append(worker)
                 self._available_queue.put_nowait(worker)
 
@@ -142,7 +142,7 @@ class AsyncWorkerPool:
             logger.info(f"Started AsyncWorkerPool with {self.size} workers")
 
     @asynccontextmanager
-    async def acquire(self) -> AsyncContextManager[AsyncWorkerProcess]:
+    async def acquire(self) -> AsyncIterator[AsyncWorkerProcess]:
         """
         Acquire an async worker from the pool.
 
@@ -176,5 +176,10 @@ class AsyncWorkerPool:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         await self.shutdown()

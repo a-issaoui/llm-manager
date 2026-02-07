@@ -9,10 +9,10 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, cast
 
-from .utils import is_code, is_cjk, is_base64_content, LRUCache
 from .exceptions import ValidationError
+from .utils import LRUCache, is_base64_content, is_cjk, is_code
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ IMAGE_TOKEN_ESTIMATE = 1000
 
 class ContentType(Enum):
     """Types of content for token estimation."""
+
     TEXT = "text"
     CODE = "code"
     CJK = "cjk"
@@ -36,6 +37,7 @@ class ContentType(Enum):
 
 class ConversationType(Enum):
     """Types of conversations for context optimization."""
+
     CHAT = "chat"
     CODING = "coding"
     REASONING = "reasoning"
@@ -44,10 +46,19 @@ class ConversationType(Enum):
 
 
 # Module-level constants for performance
-_REASONING_KEYWORDS = frozenset([
-    "think", "analyze", "reason", "proof", "demonstrate",
-    "explain", "derive", "chain of thought", "step by step"
-])
+_REASONING_KEYWORDS = frozenset(
+    [
+        "think",
+        "analyze",
+        "reason",
+        "proof",
+        "demonstrate",
+        "explain",
+        "derive",
+        "chain of thought",
+        "step by step",
+    ]
+)
 
 
 @dataclass(slots=True)
@@ -64,19 +75,19 @@ class TokenEstimate:
         is_accurate: Whether this is an accurate count or heuristic
         breakdown: Optional per-message breakdown
     """
+
     total_tokens: int
     content_tokens: int
     template_tokens: int
     special_tokens: int
     content_type: ContentType
     is_accurate: bool
-    breakdown: Optional[Dict[str, Any]] = None
+    breakdown: dict[str, Any] | None = None
 
     def __repr__(self) -> str:
         accuracy = "accurate" if self.is_accurate else "estimated"
         return (
-            f"TokenEstimate(total={self.total_tokens}, "
-            f"type={self.content_type.value}, {accuracy})"
+            f"TokenEstimate(total={self.total_tokens}, type={self.content_type.value}, {accuracy})"
         )
 
 
@@ -88,11 +99,7 @@ class TokenEstimator:
     counting when a tokenizer is available.
     """
 
-    def __init__(
-        self,
-        cache_size: int = 1000,
-        disk_cache_path: Optional[Path] = None
-    ):
+    def __init__(self, cache_size: int = 1000, disk_cache_path: Path | None = None):
         """
         Initialize token estimator.
 
@@ -105,6 +112,7 @@ class TokenEstimator:
 
         if disk_cache_path:
             from .cache import DiskCache
+
             self._disk_cache = DiskCache(disk_cache_path)
 
         self._stats = {
@@ -115,10 +123,23 @@ class TokenEstimator:
             "accurate_calls": 0,
         }
 
-    def estimate_heuristic(
-        self,
-        messages: List[Dict[str, Any]]
+    def estimate_tokens(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
     ) -> TokenEstimate:
+        """Estimate tokens for a list of messages."""
+        total_tokens = 0
+
+        # ... logic ...
+
+        return TokenEstimate(
+            total_tokens=total_tokens,
+            content_tokens=0, # Placeholder
+            template_tokens=0, # Placeholder
+            special_tokens=0, # Placeholder
+            content_type=ContentType.TEXT, # Placeholder
+            is_accurate=False # Placeholder
+        )
+    def estimate_heuristic(self, messages: list[dict[str, Any]]) -> TokenEstimate:
         """
         Fast heuristic token estimation.
 
@@ -146,7 +167,7 @@ class TokenEstimator:
         # Check memory cache first
         if cache_key in self._cache:
             self._stats["hits"] += 1
-            return self._cache[cache_key]
+            return cast(TokenEstimate, self._cache[cache_key])
 
         # Check disk cache if available
         if self._disk_cache:
@@ -183,9 +204,7 @@ class TokenEstimator:
                                 content_tokens += IMAGE_TOKEN_ESTIMATE
                                 detected_type = ContentType.IMAGE
                             elif "text" in item:
-                                content_tokens += self._estimate_text_tokens(
-                                    item["text"]
-                                )
+                                content_tokens += self._estimate_text_tokens(item["text"])
                 continue
 
             # Detect content type
@@ -227,22 +246,25 @@ class TokenEstimator:
 
         # Save to disk cache for persistence
         if self._disk_cache:
-            self._disk_cache.set(cache_key, {
-                "total_tokens": estimate.total_tokens,
-                "content_tokens": estimate.content_tokens,
-                "template_tokens": estimate.template_tokens,
-                "special_tokens": estimate.special_tokens,
-                "content_type": estimate.content_type.value,
-                "is_accurate": estimate.is_accurate,
-            })
+            self._disk_cache.set(
+                cache_key,
+                {
+                    "total_tokens": estimate.total_tokens,
+                    "content_tokens": estimate.content_tokens,
+                    "template_tokens": estimate.template_tokens,
+                    "special_tokens": estimate.special_tokens,
+                    "content_type": estimate.content_type.value,
+                    "is_accurate": estimate.is_accurate,
+                },
+            )
 
         return estimate
 
     def estimate_accurate(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         tokenizer: Any,
-        template: Optional[str] = None,
+        template: str | None = None,
     ) -> TokenEstimate:
         """
         Accurate token counting using actual tokenizer.
@@ -262,19 +284,15 @@ class TokenEstimator:
 
         if not hasattr(tokenizer, "encode"):
             raise ValidationError(
-                "Tokenizer must have encode() method",
-                {"tokenizer_type": type(tokenizer).__name__}
+                "Tokenizer must have encode() method", {"tokenizer_type": type(tokenizer).__name__}
             )
 
         # Generate cache key
-        cache_key = self._generate_cache_key(
-            messages,
-            f"accurate_{id(tokenizer)}"
-        )
+        cache_key = self._generate_cache_key(messages, f"accurate_{id(tokenizer)}")
 
         if cache_key in self._cache:
             self._stats["hits"] += 1
-            return self._cache[cache_key]
+            return cast(TokenEstimate, self._cache[cache_key])
 
         self._stats["misses"] += 1
 
@@ -330,7 +348,7 @@ class TokenEstimator:
             words = len(text.split())
             return int(words * TOKENS_PER_WORD_TEXT)
 
-    def _detect_content_type(self, messages: List[Dict[str, Any]]) -> ContentType:
+    def _detect_content_type(self, messages: list[dict[str, Any]]) -> ContentType:
         """Detect overall content type from messages."""
         code_count = 0
         cjk_count = 0
@@ -356,11 +374,7 @@ class TokenEstimator:
 
         return ContentType.TEXT
 
-    def _format_with_template(
-        self,
-        messages: List[Dict[str, Any]],
-        template: str
-    ) -> str:
+    def _format_with_template(self, messages: list[dict[str, Any]], template: str) -> str:
         """Format messages with chat template (simplified)."""
         # Simplified template rendering
         # In production, use proper Jinja2 rendering
@@ -371,7 +385,7 @@ class TokenEstimator:
             result += f"{role}: {content}\n"
         return result
 
-    def _generate_cache_key(self, messages: List[Dict[str, Any]], prefix: str) -> str:
+    def _generate_cache_key(self, messages: list[dict[str, Any]], prefix: str) -> str:
         """Generate cache key from messages using fast hash."""
         # Create stable representation - sample for performance
         parts = []
@@ -388,7 +402,7 @@ class TokenEstimator:
         hash_digest = hashlib.md5(msg_repr.encode(), usedforsecurity=False).hexdigest()[:8]
         return f"{prefix}_{hash_digest}"
 
-    def get_stats(self) -> Dict[str, int]:
+    def get_stats(self) -> dict[str, int]:
         """
         Get cache statistics.
 
@@ -402,7 +416,7 @@ class TokenEstimator:
         self._cache.clear()
 
 
-def detect_conversation_type(messages: List[Dict[str, Any]]) -> ConversationType:
+def detect_conversation_type(messages: list[dict[str, Any]]) -> ConversationType:
     """
     Detect conversation type from messages.
 
@@ -441,8 +455,7 @@ def detect_conversation_type(messages: List[Dict[str, Any]]) -> ConversationType
 
     # Check for coding
     code_messages = sum(
-        1 for msg in messages
-        if isinstance(msg.get("content"), str) and is_code(msg["content"])
+        1 for msg in messages if isinstance(msg.get("content"), str) and is_code(msg["content"])
     )
 
     if code_messages / len(messages) > 0.5:

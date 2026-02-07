@@ -4,14 +4,14 @@ Persistent disk cache for token estimation.
 Uses SQLite for fast, reliable, dependency-free caching.
 """
 
+import json
 import logging
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional, List
-import json
-from queue import Queue, Empty
+from queue import Empty, Queue
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class DiskCache:
         self,
         path: Path,
         max_size: int = 10000,
-        default_ttl: int = 86400 * 7  # 7 days
+        default_ttl: int = 86400 * 7,  # 7 days
     ):
         """
         Initialize disk cache.
@@ -55,8 +55,11 @@ class DiskCache:
         self._stats = {"hits": 0, "misses": 0, "evictions": 0}
         self.disabled = False
 
-        # Connection pool
-        self._pool: Queue = Queue(maxsize=10)
+        # Connection pool with bounded concurrency
+        self._pool: Queue[sqlite3.Connection] = Queue(maxsize=10)
+        self._max_connections = 10
+        self._active_connections = 0
+        self._pool_lock = threading.Lock()
 
         # Ensure parent directory exists
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,11 +99,19 @@ class DiskCache:
         try:
             return self._pool.get_nowait()
         except Empty:
-            conn = sqlite3.connect(
-                str(self.path),
-                timeout=5.0,
-                check_same_thread=False
-            )
+            with self._pool_lock:
+                if self._active_connections >= self._max_connections:
+                    # Pool exhausted, wait for a connection with timeout
+                    try:
+                        return self._pool.get(timeout=5.0)
+                    except Empty:
+                        raise RuntimeError(
+                            "Connection pool exhausted - too many concurrent operations"
+                        ) from None
+
+                self._active_connections += 1
+
+            conn = sqlite3.connect(str(self.path), timeout=5.0, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.row_factory = sqlite3.Row
@@ -109,12 +120,16 @@ class DiskCache:
     def _release_connection(self, conn: sqlite3.Connection) -> None:
         """Return a connection to the pool."""
         from queue import Full
+
         try:
             self._pool.put_nowait(conn)
         except Full:
+            # Pool is full, close this connection and decrement counter
+            with self._pool_lock:
+                self._active_connections = max(0, self._active_connections - 1)
             conn.close()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """
         Get value from cache.
 
@@ -129,8 +144,7 @@ class DiskCache:
         with self._lock:
             with self._get_connection() as conn:
                 row = conn.execute(
-                    "SELECT value, expires_at FROM cache WHERE key = ?",
-                    (key,)
+                    "SELECT value, expires_at FROM cache WHERE key = ?", (key,)
                 ).fetchone()
 
                 if row is None:
@@ -147,10 +161,7 @@ class DiskCache:
                     return None
 
                 # Update access time
-                conn.execute(
-                    "UPDATE cache SET accessed_at = ? WHERE key = ?",
-                    (now, key)
-                )
+                conn.execute("UPDATE cache SET accessed_at = ? WHERE key = ?", (now, key))
                 conn.commit()
 
                 self._stats["hits"] += 1
@@ -158,7 +169,7 @@ class DiskCache:
                 self._release_connection(conn)
                 return result
 
-    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
         """
         Set value in cache.
 
@@ -173,11 +184,14 @@ class DiskCache:
 
         with self._lock:
             with self._get_connection() as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT OR REPLACE INTO cache
                     (key, value, expires_at, created_at, accessed_at)
                     VALUES (?, ?, ?, ?, ?)
-                """, (key, value_json, expires_at, now, now))
+                """,
+                    (key, value_json, expires_at, now, now),
+                )
                 conn.commit()
 
                 # Check if eviction needed
@@ -191,13 +205,16 @@ class DiskCache:
         if count > self.max_size:
             # Delete oldest accessed entries
             to_delete = count - self.max_size + (self.max_size // 10)  # 10% buffer
-            conn.execute("""
+            conn.execute(
+                """
                 DELETE FROM cache WHERE key IN (
                     SELECT key FROM cache
                     ORDER BY accessed_at ASC
                     LIMIT ?
                 )
-            """, (to_delete,))
+            """,
+                (to_delete,),
+            )
             conn.commit()
             self._stats["evictions"] += to_delete
             logger.debug(f"Evicted {to_delete} cache entries")
@@ -232,7 +249,7 @@ class DiskCache:
                 conn.execute("DELETE FROM cache")
                 conn.commit()
                 self._release_connection(conn)
-                return count
+                return int(count)
 
     def cleanup_expired(self) -> int:
         """
@@ -244,15 +261,12 @@ class DiskCache:
         now = time.time()
         with self._lock:
             with self._get_connection() as conn:
-                cursor = conn.execute(
-                    "DELETE FROM cache WHERE expires_at < ?",
-                    (now,)
-                )
+                cursor = conn.execute("DELETE FROM cache WHERE expires_at < ?", (now,))
                 conn.commit()
                 self._release_connection(conn)
-                return cursor.rowcount
+                return int(cursor.rowcount) if cursor.rowcount is not None else 0
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get cache statistics.
 
@@ -268,15 +282,13 @@ class DiskCache:
             **self._stats,
             "size": size,
             "max_size": self.max_size,
-            "hit_rate": (
-                self._stats["hits"] / max(1, self._stats["hits"] + self._stats["misses"])
-            )
+            "hit_rate": (self._stats["hits"] / max(1, self._stats["hits"] + self._stats["misses"])),
         }
 
     def __len__(self) -> int:
         """Return number of cached entries."""
         with self._lock:
             with self._get_connection() as conn:
-                count = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
+                row = conn.execute("SELECT COUNT(*) FROM cache").fetchone()
                 self._release_connection(conn)
-                return count
+                return int(row[0]) if row else 0

@@ -1,11 +1,11 @@
 """OpenAI-compatible REST API server for llm_manager."""
 
-from .app import create_app, LLMServer
+from .app import LLMServer, create_app
 from .dependencies import get_llm_manager, get_or_load_model
 
 __all__ = [
-    "create_app",
     "LLMServer",
+    "create_app",
     "get_llm_manager",
     "get_or_load_model",
 ]

@@ -2,17 +2,11 @@
 Tests for llm_manager/cache.py - Persistent disk cache.
 """
 
-import json
-import sqlite3
-import tempfile
 import threading
 import time
-from pathlib import Path
 from queue import Full
+from unittest.mock import MagicMock, Mock, patch
 
-import pytest
-
-from unittest.mock import patch, Mock, MagicMock
 from llm_manager.cache import DiskCache
 
 
@@ -34,7 +28,7 @@ class TestDiskCacheBasics:
     def test_cache_init_error(self):
         """Cover cache initialization error."""
         # Path where it is USED
-        with patch('llm_manager.cache.sqlite3.connect', side_effect=Exception("SQL Error")):
+        with patch("llm_manager.cache.sqlite3.connect", side_effect=Exception("SQL Error")):
             # DiskCache should handle the error during init
             cache = DiskCache(":memory:")
             assert cache.disabled is True

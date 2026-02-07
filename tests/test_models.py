@@ -3,20 +3,19 @@ Tests for llm_manager/models.py - Model registry.
 """
 
 import json
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
-from llm_manager.models import (
-    ModelRegistry,
-    ModelMetadata,
-    ModelSpecs,
-    ModelCapabilities,
-    MetadataTestConfig,
-    ContextTest,
-)
 from llm_manager.exceptions import ModelNotFoundError, ValidationError
+from llm_manager.models import (
+    ContextTest,
+    MetadataTestConfig,
+    ModelCapabilities,
+    ModelMetadata,
+    ModelRegistry,
+    ModelSpecs,
+)
 
 
 class TestMetadataTestConfig:
@@ -69,7 +68,7 @@ class TestContextTest:
             "error": None,
             "test_config": {"kv_quant": "q4_0", "flash_attn": True, "gpu_layers": -1},
             "timestamp": "2026-01-01",
-            "confidence": 0.95
+            "confidence": 0.95,
         }
         ct = ContextTest.from_dict(data)
         assert ct.max_context == 8192
@@ -94,7 +93,7 @@ class TestModelCapabilities:
             "vision": True,
             "audio_in": True,
             "reasoning": True,
-            "tools": True
+            "tools": True,
         }
         caps = ModelCapabilities.from_dict(data)
         assert caps.chat is False
@@ -133,8 +132,8 @@ class TestModelSpecs:
                 "error": None,
                 "test_config": {"kv_quant": "q4_0", "flash_attn": True, "gpu_layers": -1},
                 "timestamp": "2026-01-01",
-                "confidence": 1.0
-            }
+                "confidence": 1.0,
+            },
         }
         specs = ModelSpecs.from_dict(data)
         assert specs.context_test.max_context == 8192
@@ -166,15 +165,15 @@ class TestModelMetadata:
                 error=None,
                 test_config=MetadataTestConfig(kv_quant="q4_0", flash_attn=True, gpu_layers=-1),
                 timestamp="2026-01-01",
-                confidence=1.0
-            )
+                confidence=1.0,
+            ),
         )
         metadata = ModelMetadata(
             filename="test.gguf",
             specs=specs,
             capabilities=ModelCapabilities(),
             prompt_template="",
-            path=""
+            path="",
         )
 
         config = metadata.get_optimal_config()
@@ -194,14 +193,14 @@ class TestModelMetadata:
             hidden_size=3072,
             head_count=32,
             head_count_kv=32,
-            context_test=None
+            context_test=None,
         )
         metadata = ModelMetadata(
             filename="test.gguf",
             specs=specs,
             capabilities=ModelCapabilities(),
             prompt_template="",
-            path=""
+            path="",
         )
 
         config = metadata.get_optimal_config()
@@ -223,7 +222,7 @@ class TestModelMetadata:
                 "head_count_kv": 32,
                 "vocab_size": 32000,
                 "rope_freq_base": 10000.0,
-                "file_hash": "abc123"
+                "file_hash": "abc123",
             },
             "capabilities": {
                 "chat": True,
@@ -231,12 +230,12 @@ class TestModelMetadata:
                 "vision": True,
                 "audio_in": False,
                 "reasoning": False,
-                "tools": True
+                "tools": True,
             },
             "prompt": {
                 "template": "{% for message in messages %}{{ message.content }}{% endfor %}"
             },
-            "path": "models/test.gguf"
+            "path": "models/test.gguf",
         }
 
         metadata = ModelMetadata.from_dict("test.gguf", data)
@@ -258,7 +257,7 @@ class TestModelMetadata:
             file_size_mb=4000.0,
             hidden_size=4096,
             head_count=32,
-            head_count_kv=8
+            head_count_kv=8,
         )
         assert specs.context_window == 32768
         assert specs.context_test is None
@@ -268,9 +267,10 @@ class TestModelMetadata:
             specs=specs,
             capabilities=ModelCapabilities(),
             prompt_template="",
-            path="/tmp/test.gguf"
+            path="/tmp/test.gguf",
         )
         assert metadata.capabilities.chat is True
+
 
 class TestModelRegistry:
     """Tests for ModelRegistry."""
@@ -299,24 +299,14 @@ class TestModelRegistry:
                         "tested": True,
                         "verified_stable": True,
                         "error": None,
-                        "test_config": {
-                            "kv_quant": "q4_0",
-                            "flash_attn": True,
-                            "gpu_layers": -1
-                        },
+                        "test_config": {"kv_quant": "q4_0", "flash_attn": True, "gpu_layers": -1},
                         "timestamp": "2026-01-01T00:00:00",
-                        "confidence": 1.0
-                    }
+                        "confidence": 1.0,
+                    },
                 },
-                "capabilities": {
-                    "chat": True,
-                    "reasoning": False,
-                    "tools": True
-                },
-                "prompt": {
-                    "template": "{% for message in messages %}..."
-                },
-                "path": "models/test-model.gguf"
+                "capabilities": {"chat": True, "reasoning": False, "tools": True},
+                "prompt": {"template": "{% for message in messages %}..."},
+                "path": "models/test-model.gguf",
             }
         }
 
@@ -419,7 +409,7 @@ class TestModelRegistry:
     def test_get_max_context_no_registry(self, tmp_path):
         """Test get_max_context when model not in registry."""
         registry_file = tmp_path / "models.json"
-        registry_file.write_text('{}')
+        registry_file.write_text("{}")
         registry = ModelRegistry(str(tmp_path))
 
         max_ctx = registry.get_max_context("unknown.gguf")
@@ -428,7 +418,7 @@ class TestModelRegistry:
     def test_get_recommended_context_no_registry(self, tmp_path):
         """Test get_recommended_context when model not in registry."""
         registry_file = tmp_path / "models.json"
-        registry_file.write_text('{}')
+        registry_file.write_text("{}")
         registry = ModelRegistry(str(tmp_path))
 
         rec_ctx = registry.get_recommended_context("unknown.gguf")
@@ -439,7 +429,7 @@ class TestModelRegistry:
         registry_file = tmp_path / "models.json"
         data = {
             "model1.gguf": {"specs": {}, "capabilities": {}, "prompt": {}, "path": ""},
-            "model2.gguf": {"specs": {}, "capabilities": {}, "prompt": {}, "path": ""}
+            "model2.gguf": {"specs": {}, "capabilities": {}, "prompt": {}, "path": ""},
         }
         registry_file.write_text(json.dumps(data))
         registry = ModelRegistry(str(tmp_path))
@@ -450,7 +440,7 @@ class TestModelRegistry:
     def test_save_registry(self, tmp_path):
         """Test saving registry to file."""
         registry_file = tmp_path / "models.json"
-        registry_file.write_text('{}')
+        registry_file.write_text("{}")
         registry = ModelRegistry(str(tmp_path))
 
         metadata = ModelMetadata(
@@ -465,11 +455,11 @@ class TestModelRegistry:
                 file_size_mb=2000,
                 hidden_size=3072,
                 head_count=32,
-                head_count_kv=32
+                head_count_kv=32,
             ),
             capabilities=ModelCapabilities(chat=True),
             prompt_template="test",
-            path="models/test.gguf"
+            path="models/test.gguf",
         )
         registry._models["test.gguf"] = metadata
 
@@ -477,7 +467,6 @@ class TestModelRegistry:
 
         saved_data = json.loads(registry_file.read_text())
         assert "test.gguf" in saved_data
-
 
     def test_models_registry_load_exception_handling(self, tmp_path):
         """Cover exception handling inside registry loading loop."""
@@ -489,12 +478,19 @@ class TestModelRegistry:
         data = {
             "valid.gguf": {
                 "specs": {
-                    "architecture": "llama", "quantization": "q4", "size_label": "7B",
-                    "parameters_b": 7, "layer_count": 1, "context_window": 1024,
-                    "file_size_mb": 100, "hidden_size": 1, "head_count": 1, "head_count_kv": 1
+                    "architecture": "llama",
+                    "quantization": "q4",
+                    "size_label": "7B",
+                    "parameters_b": 7,
+                    "layer_count": 1,
+                    "context_window": 1024,
+                    "file_size_mb": 100,
+                    "hidden_size": 1,
+                    "head_count": 1,
+                    "head_count_kv": 1,
                 }
             },
-            "broken.gguf": None
+            "broken.gguf": None,
         }
         registry_file.write_text(json.dumps(data))
 
@@ -508,9 +504,16 @@ class TestModelRegistry:
         registry_dir.mkdir()
 
         specs = ModelSpecs(
-            architecture="llama", quantization="q4", size_label="7B",
-            parameters_b=7, layer_count=1, context_window=1024,
-            file_size_mb=100, hidden_size=1, head_count=1, head_count_kv=1
+            architecture="llama",
+            quantization="q4",
+            size_label="7B",
+            parameters_b=7,
+            layer_count=1,
+            context_window=1024,
+            file_size_mb=100,
+            hidden_size=1,
+            head_count=1,
+            head_count_kv=1,
         )
         specs.vocab_size = 32000
         specs.rope_freq_base = 10000.0
@@ -531,12 +534,12 @@ class TestModelRegistry:
 
 class TestModelRegistryContextTest:
     """Tests for context_test serialization (lines 287-288)."""
-    
+
     def test_save_with_context_test(self, tmp_path):
         """Cover context_test serialization with test data."""
         registry_dir = tmp_path / "models"
         registry_dir.mkdir()
-        
+
         specs = ModelSpecs(
             architecture="llama",
             quantization="Q4_K_M",
@@ -547,9 +550,9 @@ class TestModelRegistryContextTest:
             file_size_mb=4000,
             hidden_size=4096,
             head_count=32,
-            head_count_kv=32
+            head_count_kv=32,
         )
-        
+
         # Add context test data using models.ContextTest
         specs.context_test = ContextTest(
             max_context=32768,
@@ -559,31 +562,27 @@ class TestModelRegistryContextTest:
             tested=True,
             verified_stable=True,
             error=None,
-            test_config=MetadataTestConfig(
-                kv_quant="q4_0",
-                flash_attn=True,
-                gpu_layers=-1
-            ),
+            test_config=MetadataTestConfig(kv_quant="q4_0", flash_attn=True, gpu_layers=-1),
             timestamp="2024-01-01T00:00:00",
-            confidence=0.95
+            confidence=0.95,
         )
-        
+
         metadata = ModelMetadata(
             filename="test.gguf",
             specs=specs,
             capabilities=ModelCapabilities(chat=True),
             prompt_template="",
-            path=str(registry_dir / "test.gguf")
+            path=str(registry_dir / "test.gguf"),
         )
-        
+
         registry = ModelRegistry(str(registry_dir))
         registry._models["test.gguf"] = metadata
         registry.save()
-        
+
         # Verify context_test was serialized correctly
         content = json.loads((registry_dir / "models.json").read_text())
         saved_context_test = content["test.gguf"]["specs"]["context_test"]
-        
+
         assert saved_context_test["max_context"] == 32768
         assert saved_context_test["recommended_context"] == 26214
         assert saved_context_test["tested"] is True
@@ -596,16 +595,15 @@ class TestModelRegistryErrors:
 
     def test_load_os_error(self, tmp_path):
         """Cover OSError handling in registry load (lines 244-245)."""
-        from unittest.mock import patch
         from llm_manager.exceptions import ValidationError
-        
+
         registry_file = tmp_path / "models.json"
-        registry_file.write_text('{}')
-        
+        registry_file.write_text("{}")
+
         registry = ModelRegistry(str(tmp_path))
-        
-        with patch('builtins.open', side_effect=OSError("Permission denied")):
+
+        with patch("builtins.open", side_effect=OSError("Permission denied")):
             with pytest.raises(ValidationError) as exc_info:
                 registry.load()
-            
+
             assert "Failed to read registry file" in str(exc_info.value)

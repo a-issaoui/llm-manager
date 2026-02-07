@@ -5,9 +5,9 @@ Context window management and dynamic resizing.
 import logging
 import time
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any
 
-from .estimation import ConversationType, detect_conversation_type, TokenEstimator
+from .estimation import ConversationType, TokenEstimator, detect_conversation_type
 from .exceptions import ContextError
 
 logger = logging.getLogger(__name__)
@@ -47,18 +47,19 @@ class ContextStats:
         n_ubatch: Micro-batch size setting
         flash_attn: Whether flash attention is enabled
     """
+
     loaded: bool
-    model_name: Optional[str]
+    model_name: str | None
     allocated_context: int
     used_tokens: int
     max_context: int
     utilization_percent: float
     allocated_percent: float
     can_grow_to: int
-    conversation_type: Optional[ConversationType]
-    n_batch: Optional[int]
-    n_ubatch: Optional[int]
-    flash_attn: Optional[bool]
+    conversation_type: ConversationType | None
+    n_batch: int | None
+    n_ubatch: int | None
+    flash_attn: bool | None
 
     def is_high_usage(self) -> bool:
         """Check if context usage is high."""
@@ -96,9 +97,7 @@ class ContextManager:
     """
 
     def __init__(
-        self,
-        estimator: Optional[TokenEstimator] = None,
-        resize_cooldown_seconds: float = 60.0
+        self, estimator: TokenEstimator | None = None, resize_cooldown_seconds: float = 60.0
     ):
         """
         Initialize context manager.
@@ -114,10 +113,10 @@ class ContextManager:
 
     def calculate_context_size(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         max_context: int,
         max_tokens: int = 256,
-        use_heuristic: bool = True
+        use_heuristic: bool = True,
     ) -> int:
         """
         Calculate optimal context size for messages.
@@ -145,8 +144,7 @@ class ContextManager:
             # Accurate estimation would require a tokenizer
             # Log this and fall back to heuristic
             logger.debug(
-                "Accurate token estimation requested but no tokenizer available, "
-                "using heuristic"
+                "Accurate token estimation requested but no tokenizer available, using heuristic"
             )
             estimate = self.estimator.estimate_heuristic(messages)
 
@@ -203,11 +201,8 @@ class ContextManager:
         return min(max_context, CONTEXT_TIERS[-1])
 
     def should_resize(
-        self,
-        current_used: int,
-        current_allocated: int,
-        max_context: int
-    ) -> Tuple[bool, Optional[int]]:
+        self, current_used: int, current_allocated: int, max_context: int
+    ) -> tuple[bool, int | None]:
         """
         Determine if context should be resized.
 
@@ -238,11 +233,7 @@ class ContextManager:
 
         # Should upsize?
         if utilization >= UPSIZE_THRESHOLD:
-            new_size = self._calculate_upsize(
-                current_allocated,
-                current_used,
-                max_context
-            )
+            new_size = self._calculate_upsize(current_allocated, current_used, max_context)
             if new_size > current_allocated:
                 logger.info(
                     f"Context upsize recommended: {current_allocated} -> {new_size} "
@@ -252,10 +243,7 @@ class ContextManager:
 
         # Should downsize?
         elif utilization <= DOWNSIZE_THRESHOLD:
-            new_size = self._calculate_downsize(
-                current_allocated,
-                current_used
-            )
+            new_size = self._calculate_downsize(current_allocated, current_used)
             if new_size < current_allocated and new_size >= MIN_DOWNSIZE_CONTEXT:
                 logger.info(
                     f"Context downsize recommended: {current_allocated} -> {new_size} "
@@ -265,12 +253,7 @@ class ContextManager:
 
         return False, None
 
-    def _calculate_upsize(
-        self,
-        current: int,
-        used: int,
-        max_context: int
-    ) -> int:
+    def _calculate_upsize(self, current: int, used: int, max_context: int) -> int:
         """Calculate new size when upsizing."""
         # Double the current size
         target = current * 2
@@ -288,11 +271,7 @@ class ContextManager:
 
         return min(new_size, max_context)
 
-    def _calculate_downsize(
-        self,
-        current: int,
-        used: int
-    ) -> int:
+    def _calculate_downsize(self, current: int, used: int) -> int:
         """Calculate new size when downsizing."""
         # Target size with headroom
         target = int(used * (1.0 + (1.0 - DOWNSIZE_THRESHOLD)))
@@ -312,11 +291,7 @@ class ContextManager:
         self._last_resize_time = time.time()
         self._resize_count += 1
 
-    def calculate_batch_size(
-        self,
-        context_size: int,
-        vram_gb: float = 0.0
-    ) -> Tuple[int, int]:
+    def calculate_batch_size(self, context_size: int, vram_gb: float = 0.0) -> tuple[int, int]:
         """
         Calculate optimal batch sizes.
 
@@ -363,7 +338,7 @@ class ContextManager:
 
         return n_batch, n_ubatch
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get context manager statistics.
 
@@ -374,16 +349,11 @@ class ContextManager:
             "resize_count": self._resize_count,
             "last_resize_time": self._last_resize_time,
             "cooldown_remaining": max(
-                0,
-                self.resize_cooldown - (time.time() - self._last_resize_time)
+                0, self.resize_cooldown - (time.time() - self._last_resize_time)
             ),
         }
 
-    def validate_context_size(
-        self,
-        requested: int,
-        max_context: int
-    ) -> int:
+    def validate_context_size(self, requested: int, max_context: int) -> int:
         """
         Validate and adjust context size request.
 
@@ -400,23 +370,18 @@ class ContextManager:
         if requested < 512:
             raise ContextError(
                 f"Context size too small: {requested} (min 512)",
-                {"requested": requested, "minimum": 512}
+                {"requested": requested, "minimum": 512},
             )
 
         if requested > max_context:
-            logger.warning(
-                f"Requested context {requested} exceeds max {max_context}, "
-                f"using max"
-            )
+            logger.warning(f"Requested context {requested} exceeds max {max_context}, using max")
             return max_context
 
         # Round to nearest tier
         for tier in CONTEXT_TIERS:
             if tier >= requested:
                 if tier != requested:
-                    logger.debug(
-                        f"Rounded context from {requested} to tier {tier}"
-                    )
+                    logger.debug(f"Rounded context from {requested} to tier {tier}")
                 return tier
 
         return max_context

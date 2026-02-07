@@ -1,49 +1,49 @@
 """OpenAI-compatible API schemas."""
 
 from .openai import (
-    # Chat completions
-    ChatMessage,
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChunk,
     ChatCompletionChoice,
     ChatCompletionChoiceChunk,
-    DeltaMessage,
-    UsageInfo,
+    ChatCompletionChunk,
+    ChatCompletionRequest,
+    ChatCompletionResponse,
+    # Chat completions
+    ChatMessage,
+    CompletionChoice,
     # Legacy completions
     CompletionRequest,
     CompletionResponse,
-    CompletionChoice,
-    # Models
-    ModelInfo,
-    ModelList,
+    DeltaMessage,
+    EmbeddingData,
     # Embeddings
     EmbeddingRequest,
     EmbeddingResponse,
-    EmbeddingData,
     # Errors
     ErrorResponse,
+    # Models
+    ModelInfo,
+    ModelList,
     # Common
     StreamOptions,
+    UsageInfo,
 )
 
 __all__ = [
-    "ChatMessage",
-    "ChatCompletionRequest",
-    "ChatCompletionResponse",
-    "ChatCompletionChunk",
     "ChatCompletionChoice",
     "ChatCompletionChoiceChunk",
-    "DeltaMessage",
-    "UsageInfo",
+    "ChatCompletionChunk",
+    "ChatCompletionRequest",
+    "ChatCompletionResponse",
+    "ChatMessage",
+    "CompletionChoice",
     "CompletionRequest",
     "CompletionResponse",
-    "CompletionChoice",
-    "ModelInfo",
-    "ModelList",
+    "DeltaMessage",
+    "EmbeddingData",
     "EmbeddingRequest",
     "EmbeddingResponse",
-    "EmbeddingData",
     "ErrorResponse",
+    "ModelInfo",
+    "ModelList",
     "StreamOptions",
+    "UsageInfo",
 ]

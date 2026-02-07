@@ -2,10 +2,9 @@
 Tests for llm_manager/context.py - Context window management.
 """
 
-import time
 import pytest
 
-from llm_manager.context import ContextManager, ContextStats, CONTEXT_TIERS
+from llm_manager.context import CONTEXT_TIERS, ContextManager, ContextStats
 from llm_manager.estimation import ConversationType
 from llm_manager.exceptions import ContextError
 
@@ -22,38 +21,27 @@ class TestContextManager:
         """Test basic context calculation."""
         messages = [{"role": "user", "content": "Hello world"}]
 
-        context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768
-        )
+        context = context_manager.calculate_context_size(messages, max_context=32768)
 
         assert context >= 2048
         assert context <= 32768
 
     def test_calculate_context_long_messages(self, context_manager):
         """Test context calculation with long messages."""
-        messages = [
-            {"role": "user", "content": "Hello " * 1000}
-        ]
+        messages = [{"role": "user", "content": "Hello " * 1000}]
 
         context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768,
-            max_tokens=512
+            messages, max_context=32768, max_tokens=512
         )
 
         assert context >= 4096
 
     def test_calculate_context_reasoning(self, context_manager):
         """Test context for reasoning tasks."""
-        messages = [
-            {"role": "user", "content": "Let's think step by step about this problem"}
-        ]
+        messages = [{"role": "user", "content": "Let's think step by step about this problem"}]
 
         context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768,
-            max_tokens=256
+            messages, max_context=32768, max_tokens=256
         )
 
         assert context >= 4096
@@ -67,9 +55,7 @@ class TestContextManager:
         ]
 
         context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768,
-            max_tokens=256
+            messages, max_context=32768, max_tokens=256
         )
 
         assert context >= 2048
@@ -77,16 +63,17 @@ class TestContextManager:
     def test_calculate_context_multimodal(self, context_manager):
         """Test context calculation for multimodal conversation."""
         messages = [
-            {"role": "user", "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {"type": "image_url", "image_url": {"url": "..."}}
-            ]}
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {"type": "image_url", "image_url": {"url": "..."}},
+                ],
+            }
         ]
 
         context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768,
-            max_tokens=256
+            messages, max_context=32768, max_tokens=256
         )
 
         assert context >= 2048
@@ -95,13 +82,11 @@ class TestContextManager:
         """Test context calculation for tool conversation."""
         messages = [
             {"role": "user", "content": "Call a function"},
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]}
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]},
         ]
 
         context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768,
-            max_tokens=256
+            messages, max_context=32768, max_tokens=256
         )
 
         assert context >= 2048
@@ -111,9 +96,7 @@ class TestContextManager:
         messages = [{"role": "user", "content": "Hello"}]
 
         context = context_manager.calculate_context_size(
-            messages,
-            max_context=32768,
-            use_heuristic=False
+            messages, max_context=32768, use_heuristic=False
         )
 
         assert context >= 2048
@@ -142,9 +125,7 @@ class TestContextManager:
     def test_should_resize_upsize(self, context_manager):
         """Test upsize detection."""
         should, new_size = context_manager.should_resize(
-            current_used=3800,
-            current_allocated=4096,
-            max_context=32768
+            current_used=3800, current_allocated=4096, max_context=32768
         )
 
         assert should is True
@@ -155,9 +136,7 @@ class TestContextManager:
         context_manager._last_resize_time = 0
 
         should, _ = context_manager.should_resize(
-            current_used=1000,
-            current_allocated=8192,
-            max_context=32768
+            current_used=1000, current_allocated=8192, max_context=32768
         )
 
         assert should is False
@@ -167,9 +146,7 @@ class TestContextManager:
         context_manager.mark_resized()
 
         should, _ = context_manager.should_resize(
-            current_used=3800,
-            current_allocated=4096,
-            max_context=32768
+            current_used=3800, current_allocated=4096, max_context=32768
         )
 
         assert should is False
@@ -252,18 +229,18 @@ class TestContextManager:
         # Use a larger context where downsize will actually reduce tier
         # With MIN_REDUCTION_FACTOR=0.75, need current large enough
         current_allocated = 32768  # Large context
-        current_used = 1000        # Very low utilization (< 50%)
+        current_used = 1000  # Very low utilization (< 50%)
         max_ctx = 131072
-        
+
         # Set last resize time to bypass cooldown
         context_manager._last_resize_time = 0
-        
+
         # Mock _calculate_downsize to return a smaller size
-        with patch.object(context_manager, '_calculate_downsize', return_value=16384):
+        with patch.object(context_manager, "_calculate_downsize", return_value=16384):
             should_resize, new_size = context_manager.should_resize(
                 current_used, current_allocated, max_ctx
             )
-            
+
             # Should recommend downsize
             assert should_resize is True
             assert new_size < current_allocated
@@ -276,8 +253,8 @@ class TestContextManager:
         current = 4096  # 4096 * 2 = 8192, which is next tier - this works
         # But we want to test when _find_tier returns something <= current
         # So we mock _find_tier to return current, forcing fallback
-        
-        with patch.object(context_manager, '_find_tier', return_value=4096):
+
+        with patch.object(context_manager, "_find_tier", return_value=4096):
             new_size = context_manager._calculate_upsize(current, 3500, 32768)
             # Should find next tier up despite _find_tier returning current
             assert new_size > current
@@ -287,23 +264,23 @@ class TestContextManager:
         """Test upsize when already at max context."""
         current = 131072  # Maximum tier
         max_ctx = 131072
-        
+
         new_size = context_manager._calculate_upsize(current, 100000, max_ctx)
-        
+
         assert new_size == max_ctx
 
     def test_validate_context_size_rounding(self, context_manager):
         """Test context size validation rounds to nearest tier."""
         # Request size between tiers
         result = context_manager.validate_context_size(5000, 32768)
-        
+
         # Should round up to 8192
         assert result == 8192
 
     def test_validate_context_size_exceeds_max(self, context_manager):
         """Test validation caps at max context."""
         result = context_manager.validate_context_size(50000, 32768)
-        
+
         assert result == 32768
 
         validated = context_manager.validate_context_size(4096, 32768)
@@ -312,10 +289,6 @@ class TestContextManager:
         validated = context_manager.validate_context_size(100000, 32768)
         assert validated == 32768
 
-    def test_validate_context_size_rounding(self, context_manager):
-        """Test context size rounding to tier."""
-        validated = context_manager.validate_context_size(3000, 32768)
-        assert validated == 4096
 
 
 class TestContextStats:
@@ -335,7 +308,7 @@ class TestContextStats:
             conversation_type=ConversationType.CHAT,
             n_batch=512,
             n_ubatch=256,
-            flash_attn=True
+            flash_attn=True,
         )
 
         assert stats.loaded is True
@@ -355,7 +328,7 @@ class TestContextStats:
             conversation_type=None,
             n_batch=None,
             n_ubatch=None,
-            flash_attn=None
+            flash_attn=None,
         )
 
         assert stats.is_high_usage() is True
@@ -374,7 +347,7 @@ class TestContextStats:
             conversation_type=None,
             n_batch=None,
             n_ubatch=None,
-            flash_attn=None
+            flash_attn=None,
         )
 
         assert stats.is_near_full() is True
@@ -393,7 +366,7 @@ class TestContextStats:
             conversation_type=None,
             n_batch=None,
             n_ubatch=None,
-            flash_attn=None
+            flash_attn=None,
         )
 
         assert stats.is_underutilized() is True
@@ -412,7 +385,7 @@ class TestContextStats:
             conversation_type=ConversationType.CHAT,
             n_batch=512,
             n_ubatch=256,
-            flash_attn=True
+            flash_attn=True,
         )
 
         string = str(stats)
@@ -434,7 +407,7 @@ class TestContextStats:
             conversation_type=None,
             n_batch=None,
             n_ubatch=None,
-            flash_attn=None
+            flash_attn=None,
         )
 
         string = str(stats)
@@ -442,6 +415,8 @@ class TestContextStats:
 
 
 from unittest.mock import patch
+
+
 class TestContextEdgeCases:
     """Tests for edge cases and specific coverage lines."""
 
@@ -450,7 +425,7 @@ class TestContextEdgeCases:
         context_manager = ContextManager()
         # allocated=8192, used=100 (utilization ~1.2%) -> should downsize
         # Force calculate_downsize to return a valid smaller size
-        with patch('llm_manager.context.ContextManager._calculate_downsize', return_value=4096):
+        with patch("llm_manager.context.ContextManager._calculate_downsize", return_value=4096):
             should_resize, new_size = context_manager.should_resize(8192, 100, 32768)
             assert should_resize is True
             assert new_size == 2048
@@ -463,19 +438,19 @@ class TestContextEdgeCases:
         # So find_tier returns max_context=5000 if strict, or...
         # Let's mock find_tier to return something <= current to trigger the loop
 
-        with patch.object(context_manager, '_find_tier', side_effect=[4096]):
-             # This triggers new_size <= current
-             # Then enters loop to find next tier > current and <= max_context
-             # We need a tier scheme where this happens.
-             # Easier to just force the condition
-             pass
+        with patch.object(context_manager, "_find_tier", side_effect=[4096]):
+            # This triggers new_size <= current
+            # Then enters loop to find next tier > current and <= max_context
+            # We need a tier scheme where this happens.
+            # Easier to just force the condition
+            pass
 
     def test_calculate_batch_size_high_vram(self):
         """Cover batch size calculation with high VRAM."""
         context_manager = ContextManager()
         # VRAM >= 24GB
         nb, nub = context_manager.calculate_batch_size(4096, vram_gb=24.0)
-        assert nb > 512 # Should be boosted
+        assert nb > 512  # Should be boosted
 
         # VRAM >= 12GB
         nb, nub = context_manager.calculate_batch_size(4096, vram_gb=12.0)
@@ -493,21 +468,12 @@ class TestContextEdgeCases:
         # This happens if requested > all tiers? No, header check handles that.
         # It happens if requested is not found in tiers and we don't return.
 
-        with patch('llm_manager.context.CONTEXT_TIERS', []):
+        with patch("llm_manager.context.CONTEXT_TIERS", []):
             # No tiers, effectively skip loop
             res = context_manager.validate_context_size(1024, 2048)
             res = context_manager.validate_context_size(1024, 2048)
-            assert res == 2048 # Returns max_context
+            assert res == 2048  # Returns max_context
 
-    def test_should_resize_downsize_logging(self):
-        """Cover downsize logging path."""
-        context_manager = ContextManager()
-        # allocated=8192, used=100 (utilization ~1.2%) -> should downsize
-        # Force calculate_downsize to return a valid smaller size
-        with patch('llm_manager.context.ContextManager._calculate_downsize', return_value=4096):
-            should_resize, new_size = context_manager.should_resize(8192, 100, 32768)
-            assert should_resize is True
-            assert new_size == 2048
 
     def test_context_batch_size_medium(self):
         """Cover BATCH_SIZE_MEDIUM_CTX logic (context.py line 340)."""
@@ -528,28 +494,28 @@ class TestContextLoggingAndEdgeCases:
         """Cover logger.info for downsize recommendation (lines 260-264)."""
         import logging
         from unittest.mock import patch
-        
+
         context_manager = ContextManager()
-        
+
         with caplog.at_level(logging.INFO, logger="llm_manager.context"):
-            with patch.object(context_manager, '_calculate_downsize', return_value=4096):
+            with patch.object(context_manager, "_calculate_downsize", return_value=4096):
                 should_resize, new_size = context_manager.should_resize(8192, 100, 32768)
-        
+
         assert should_resize is True
         assert "downsize" in caplog.text.lower() or "recommended" in caplog.text.lower()
 
     def test_upsize_tier_break_logic(self):
         """Cover tier break logic in upsize (lines 286-287)."""
         from unittest.mock import patch
-        
+
         context_manager = ContextManager()
         # current=4096, max=8192, find_tier returns 4096 (<= current)
         # Then loop looks for tier > current, 8192 fits, breaks
         # This covers line 286-287 (new_size = tier; break)
-        
-        with patch.object(context_manager, '_find_tier', return_value=4096):
+
+        with patch.object(context_manager, "_find_tier", return_value=4096):
             should_resize, new_size = context_manager.should_resize(4096, 4000, 8192)
-        
+
         # With high utilization (~98%), should recommend upsize
         assert should_resize is True
         assert new_size >= 4096

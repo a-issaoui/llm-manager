@@ -4,17 +4,30 @@ Production-Grade LLM Manager v5.0
 
 A robust, production-ready LLM management system.
 
-Basic usage:
+Basic usage (sync):
 
-    >>> from llm_manager import LLMManager, get_config
-    >>> 
-    >>> config = get_config()
-    >>> async with LLMManager(config=config) as manager:
-    ...     await manager.load_model_async("my-model.gguf")
-    ...     response = await manager.generate_async(
+    >>> from llm_manager import LLMManager
+    >>>
+    >>> with LLMManager(models_dir="./models") as manager:
+    ...     manager.load_model("my-model.gguf")
+    ...     response = manager.generate(
     ...         messages=[{"role": "user", "content": "Hello!"}]
     ...     )
     ...     print(response['choices'][0]['message']['content'])
+
+Basic usage (async):
+
+    >>> import asyncio
+    >>> from llm_manager import LLMManager
+    >>>
+    >>> async def main():
+    ...     async with LLMManager(models_dir="./models") as manager:
+    ...         await manager.load_model_async("my-model.gguf")
+    ...         response = await manager.generate_async(
+    ...             messages=[{"role": "user", "content": "Hello!"}]
+    ...         )
+    ...         print(response['choices'][0]['message']['content'])
+    >>> asyncio.run(main())
 
 :copyright: (c) 2026 by Production-Grade LLM Systems
 :license: MIT
@@ -25,159 +38,142 @@ __author__ = "Production-Grade LLM Systems"
 __license__ = "MIT"
 
 # Core
-from .core import LLMManager, DEFAULT_CONTEXT_CONFIG
-
-# Models & Registry
-from .models import ModelRegistry, ModelMetadata
-
-# Context Management
-from .context import ContextManager, ContextStats
-
-# Token Estimation
-from .estimation import (
-    TokenEstimator, 
-    TokenEstimate, 
-    ContentType, 
-    ConversationType
-)
-
-# Worker Processes
-from .workers import WorkerProcess, AsyncWorkerProcess
-
-# Worker Pools
-from .pool import WorkerPool, AsyncWorkerPool
-
 # Caching
 from .cache import DiskCache
 
-# Chat History (Agent Feature)
-from .history import ChatHistory, HistoryConfig
-
-# Metrics & Telemetry (Agent Feature)
-from .metrics import MetricsCollector, PerformanceStats, RequestMetrics, get_global_metrics
-
-# Model Scanner
-from .scanner import (
-    ModelScanner,
-    scan_models,
-    PerfectScanner,
-    ModelEntry,
-    ModelSpecs,
-    ModelCapabilities,
-    ContextTestResult,
-)
-
 # Configuration System
 from .config import (
-    Config,
-    ModelConfig,
-    GenerationConfig,
-    ContextConfig,
-    WorkerConfig,
-    GPUConfig,
     CacheConfig,
+    Config,
+    ConfigValidationError,
+    ContextConfig,
+    EstimationConfig,
+    GenerationConfig,
+    GPUConfig,
     LoggingConfig,
+    ModelConfig,
+    ResourceConfig,
     ScannerConfig,
     SecurityConfig,
-    EstimationConfig,
-    ResourceConfig,
     ServerConfig,
+    WorkerConfig,
+    clear_config_cache,
+    create_default_config,
     get_config,
     load_config,
     reload_config,
-    clear_config_cache,
-    create_default_config,
-    ConfigValidationError,
 )
+
+# Context Management
+from .context import ContextManager, ContextStats
+from .core import DEFAULT_CONTEXT_CONFIG, LLMManager
+
+# Token Estimation
+from .estimation import ContentType, ConversationType, TokenEstimate, TokenEstimator
 
 # Exceptions
 from .exceptions import (
+    ContextError,
+    GenerationError,
     LLMManagerError,
     ModelLoadError,
     ModelNotFoundError,
-    GenerationError,
-    WorkerError,
-    ContextError,
     ValidationError,
+    WorkerError,
 )
+
+# Metrics & Telemetry
+from .metrics import MetricsCollector, PerformanceStats, RequestMetrics, get_global_metrics
+
+# Models & Registry
+from .models import ModelMetadata, ModelRegistry
+
+# Worker Pools
+from .pool import AsyncWorkerPool, WorkerPool
+
+# Model Scanner
+from .scanner import (
+    ContextTestResult,
+    ModelCapabilities,
+    ModelEntry,
+    ModelScanner,
+    ModelSpecs,
+    PerfectScanner,
+    scan_models,
+)
+
+# Tool Calling (Function Calling)
+from .tool_parser import extract_tool_names, has_tool_calls, parse_tool_calls
+
+# Worker Processes
+from .workers import AsyncWorkerProcess, WorkerProcess
 
 # Server (optional, import may fail if fastapi not installed)
 try:
     from .server import LLMServer, create_app
+
     _server_available = True
 except ImportError:
     _server_available = False
-    LLMServer = None
-    create_app = None
+    LLMServer = None  # type: ignore
+    create_app = None  # type: ignore
 
 __all__ = [
-    # Core
-    "LLMManager",
-    # Models & Registry
-    "ModelRegistry",
-    "ModelMetadata",
-    # Context
+    "AsyncWorkerPool",
+    "AsyncWorkerProcess",
+    "CacheConfig",
+    "clear_config_cache",
+    "Config",
+    "ConfigValidationError",
+    "ContentType",
+    "ContextConfig",
+    "ContextError",
     "ContextManager",
     "ContextStats",
-    # Estimation
-    "TokenEstimator",
-    "TokenEstimate",
-    "ContentType",
-    "ConversationType",
-    # Workers
-    "WorkerProcess",
-    "AsyncWorkerProcess",
-    # Pools
-    "WorkerPool",
-    "AsyncWorkerPool",
-    # Cache
-    "DiskCache",
-    # Chat History (Agent Feature)
-    "ChatHistory",
-    "HistoryConfig",
-    # Metrics (Agent Feature)
-    "MetricsCollector",
-    "PerformanceStats",
-    "RequestMetrics",
-    "get_global_metrics",
-    # Scanner
-    "ModelScanner",
-    "scan_models",
-    "PerfectScanner",
-    "ModelEntry",
-    "ModelSpecs",
-    "ModelCapabilities",
     "ContextTestResult",
-    # Configuration
-    "Config",
-    "ModelConfig",
+    "ConversationType",
+    "create_app",
+    "create_default_config",
+    "DEFAULT_CONTEXT_CONFIG",
+    "DiskCache",
+    "EstimationConfig",
+    "extract_tool_names",
     "GenerationConfig",
-    "ContextConfig",
-    "WorkerConfig",
+    "GenerationError",
+    "get_config",
+    "get_global_metrics",
     "GPUConfig",
-    "CacheConfig",
+    "has_tool_calls",
+    "LLMManager",
+    "LLMManagerError",
+    "LLMServer",
+    "load_config",
     "LoggingConfig",
+    "MetricsCollector",
+    "ModelCapabilities",
+    "ModelConfig",
+    "ModelEntry",
+    "ModelLoadError",
+    "ModelMetadata",
+    "ModelNotFoundError",
+    "ModelRegistry",
+    "ModelScanner",
+    "ModelSpecs",
+    "parse_tool_calls",
+    "PerfectScanner",
+    "PerformanceStats",
+    "reload_config",
+    "RequestMetrics",
+    "ResourceConfig",
+    "scan_models",
     "ScannerConfig",
     "SecurityConfig",
-    "EstimationConfig",
-    "ResourceConfig",
     "ServerConfig",
-    "DEFAULT_CONTEXT_CONFIG",
-    "get_config",
-    "load_config",
-    "reload_config",
-    "clear_config_cache",
-    "create_default_config",
-    "ConfigValidationError",
-    # Exceptions
-    "LLMManagerError",
-    "ModelLoadError",
-    "ModelNotFoundError",
-    "GenerationError",
-    "WorkerError",
-    "ContextError",
+    "TokenEstimate",
+    "TokenEstimator",
     "ValidationError",
-    # Server (optional)
-    "LLMServer",
-    "create_app",
+    "WorkerConfig",
+    "WorkerError",
+    "WorkerPool",
+    "WorkerProcess",
 ]

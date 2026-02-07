@@ -3,38 +3,40 @@ Tests for llm_manager/core.py - Main LLMManager class.
 """
 
 import asyncio
-import gc
 import json
 import logging
-import subprocess
+from dataclasses import asdict
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock, mock_open
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from llm_manager.core import LLMManager, LLAMA_CPP_AVAILABLE, TORCH_AVAILABLE
+from llm_manager.core import LLMManager
+from llm_manager.estimation import ConversationType
 from llm_manager.exceptions import (
+    GenerationError,
     ModelLoadError,
     ModelNotFoundError,
-    GenerationError,
-    ValidationError,
 )
-from llm_manager.estimation import ConversationType
-from llm_manager.models import ContextTest, MetadataTestConfig, ModelCapabilities, ModelMetadata, ModelSpecs
-from dataclasses import asdict
-from queue import Full
-
+from llm_manager.models import (
+    ContextTest,
+    MetadataTestConfig,
+    ModelCapabilities,
+    ModelMetadata,
+    ModelSpecs,
+)
 
 # ============================================
 # Initialization Tests
 # ============================================
+
 
 class TestLLMManagerInit:
     """Tests for LLMManager initialization."""
 
     def test_default_init(self, tmp_path):
         """Test default initialization."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -44,7 +46,7 @@ class TestLLMManagerInit:
 
     def test_init_creates_components(self, tmp_path):
         """Test initialization creates core components."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -53,10 +55,10 @@ class TestLLMManagerInit:
 
     def test_init_with_pool(self, tmp_path):
         """Test initialization with worker pool."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
-            with patch('llm_manager.core.WorkerPool') as mock_pool:
-                with patch('llm_manager.core.AsyncWorkerPool') as mock_async_pool:
+            with patch("llm_manager.core.WorkerPool") as mock_pool:
+                with patch("llm_manager.core.AsyncWorkerPool") as mock_async_pool:
                     manager = LLMManager(models_dir=str(tmp_path), pool_size=4)
 
         assert manager.pool is not None
@@ -64,7 +66,7 @@ class TestLLMManagerInit:
 
     def test_init_without_subprocess(self, tmp_path):
         """Test initialization without subprocess."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
 
@@ -74,9 +76,9 @@ class TestLLMManagerInit:
     def test_init_loads_registry(self, tmp_path):
         """Test initialization loads registry if exists."""
         registry_file = tmp_path / "models.json"
-        registry_file.write_text('{}')
+        registry_file.write_text("{}")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = Mock()
             mock_registry.return_value.__len__ = Mock(return_value=5)
             manager = LLMManager(models_dir=str(tmp_path))
@@ -86,9 +88,9 @@ class TestLLMManagerInit:
     def test_init_registry_load_failure(self, tmp_path, caplog):
         """Test initialization handles registry load failure."""
         registry_file = tmp_path / "models.json"
-        registry_file.write_text('{}')
+        registry_file.write_text("{}")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.side_effect = Exception("Load error")
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -99,6 +101,7 @@ class TestLLMManagerInit:
 # Path Resolution Tests
 # ============================================
 
+
 class TestResolveModelPath:
     """Tests for _resolve_model_path."""
 
@@ -107,7 +110,7 @@ class TestResolveModelPath:
         model_file = tmp_path / "model.gguf"
         model_file.write_text("test")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             resolved = manager._resolve_model_path(str(model_file))
@@ -119,7 +122,7 @@ class TestResolveModelPath:
         model_file = tmp_path / "model.gguf"
         model_file.write_text("test")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             resolved = manager._resolve_model_path("model.gguf")
@@ -128,7 +131,7 @@ class TestResolveModelPath:
 
     def test_path_traversal_blocked(self, tmp_path):
         """Test path traversal attack is blocked."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -137,8 +140,8 @@ class TestResolveModelPath:
 
             assert "traversal" in str(exc_info.value).lower()
 
-    def test_external_path_with_warning(self, tmp_path, caplog):
-        """Test external path with warning."""
+    def test_external_path_blocked(self, tmp_path, caplog):
+        """Test external path is blocked for security (P0 fix)."""
         models_dir = tmp_path / "models"
         models_dir.mkdir()
         external_dir = tmp_path / "external"
@@ -146,14 +149,15 @@ class TestResolveModelPath:
         external_file = external_dir / "external.gguf"
         external_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(models_dir))
 
-            with patch('llm_manager.core.logger') as mock_logger:
-                resolved = manager._resolve_model_path(str(external_file))
+            with pytest.raises(ModelNotFoundError) as exc_info:
+                manager._resolve_model_path(str(external_file))
 
-        assert resolved == external_file
+        assert "access denied" in str(exc_info.value).lower()
+        assert "outside models directory" in str(exc_info.value).lower()
 
     def test_recursive_search(self, tmp_path):
         """Test recursive search in models_dir."""
@@ -162,7 +166,7 @@ class TestResolveModelPath:
         model_file = nested_dir / "model.gguf"
         model_file.write_text("test")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             resolved = manager._resolve_model_path("model.gguf")
@@ -171,7 +175,7 @@ class TestResolveModelPath:
 
     def test_not_found_error(self, tmp_path):
         """Test error when model not found."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -189,6 +193,7 @@ class TestResolveModelPath:
 # Load Config Tests
 # ============================================
 
+
 class TestPrepareLoadConfig:
     """Tests for _prepare_load_config."""
 
@@ -197,7 +202,7 @@ class TestPrepareLoadConfig:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -205,7 +210,7 @@ class TestPrepareLoadConfig:
                 "model.gguf",
                 n_ctx=None,
                 auto_context=True,
-                messages=[{"role": "user", "content": "Hello"}]
+                messages=[{"role": "user", "content": "Hello"}],
             )
 
         assert config["n_ctx"] >= 2048
@@ -215,14 +220,11 @@ class TestPrepareLoadConfig:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
-            path, config = manager._prepare_load_config(
-                "model.gguf",
-                n_ctx=8192
-            )
+            path, config = manager._prepare_load_config("model.gguf", n_ctx=8192)
 
         assert config["n_ctx"] == 8192
 
@@ -234,7 +236,7 @@ class TestPrepareLoadConfig:
         mock_registry = Mock()
         mock_registry.get.side_effect = Exception("Registry error")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry_class:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry_class:
             mock_registry_class.return_value = mock_registry
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -254,7 +256,7 @@ class TestPrepareLoadConfig:
         mock_registry = Mock()
         mock_registry.get.return_value = mock_metadata
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry_class:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry_class:
             mock_registry_class.return_value = mock_registry
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -267,11 +269,13 @@ class TestPrepareLoadConfig:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry_class:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry_class:
             mock_registry_class.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
-            path, config = manager._prepare_load_config("model.gguf", auto_context=False, n_ctx=None)
+            path, config = manager._prepare_load_config(
+                "model.gguf", auto_context=False, n_ctx=None
+            )
 
             assert config["n_ctx"] == 4096  # DEFAULT_CONTEXT_CONFIG["recommended_context"]
 
@@ -298,7 +302,7 @@ class TestPrepareLoadConfig:
         registry_file = tmp_path / "models.json"
         registry_file.write_text('{"models": {}}')
 
-        with patch('llm_manager.core.ModelRegistry', return_value=mock_registry):
+        with patch("llm_manager.core.ModelRegistry", return_value=mock_registry):
             manager = LLMManager(models_dir=str(tmp_path))
 
             # Ensure registry was set
@@ -319,9 +323,16 @@ class TestPrepareLoadConfig:
 
         # Create a model entry with context_test
         specs = ModelSpecs(
-            architecture="llama", quantization="q4", size_label="7B",
-            parameters_b=7, layer_count=1, context_window=1024,
-            file_size_mb=100, hidden_size=1, head_count=1, head_count_kv=1
+            architecture="llama",
+            quantization="q4",
+            size_label="7B",
+            parameters_b=7,
+            layer_count=1,
+            context_window=1024,
+            file_size_mb=100,
+            hidden_size=1,
+            head_count=1,
+            head_count_kv=1,
         )
         context_test = ContextTest(
             max_context=8192,
@@ -333,7 +344,7 @@ class TestPrepareLoadConfig:
             error=None,
             test_config=MetadataTestConfig("q4_0", False, 0),
             timestamp="2023-01-01",
-            confidence=1.0
+            confidence=1.0,
         )
         specs.context_test = context_test
         metadata = ModelMetadata("test_rec.gguf", specs, ModelCapabilities(), "", "")
@@ -341,9 +352,7 @@ class TestPrepareLoadConfig:
         registry_file = registry_dir / "models.json"
 
         # Manually create the JSON structure that matches what ModelRegistry loads
-        registry_content = {
-            "test_rec.gguf": asdict(metadata)
-        }
+        registry_content = {"test_rec.gguf": asdict(metadata)}
         registry_file.write_text(json.dumps(registry_content))
 
         # Initialize manager with this registry
@@ -358,42 +367,42 @@ class TestPrepareLoadConfig:
         # Mock _resolve_model_path/validate/etc to pass
         manager._resolve_model_path = Mock(return_value=Path("test_rec.gguf"))
         with patch("llm_manager.core.validate_model_path"):
-             # Mock config.py or assume defaults
-             # The key is _prepare_load_config uses registry
-             path, config = manager._prepare_load_config("test_rec.gguf", auto_context=True)
+            # Mock config.py or assume defaults
+            # The key is _prepare_load_config uses registry
+            path, config = manager._prepare_load_config("test_rec.gguf", auto_context=True)
 
-             # n_ctx should be 6000 (recommended)
-             assert config["n_ctx"] == 6000
+            # n_ctx should be 6000 (recommended)
+            assert config["n_ctx"] == 6000
+
+
 # ============================================
 # Direct Load Tests
 # ============================================
 
+
 class TestLoadModelDirect:
     """Tests for _load_direct."""
 
-    @patch('llm_manager.core.LLAMA_CPP_AVAILABLE', True)
-    @patch('llm_manager.core.Llama')
+    @patch("llm_manager.core.LLAMA_CPP_AVAILABLE", True)
+    @patch("llm_manager.core.Llama")
     def test_load_direct_success(self, mock_llama_class, tmp_path):
         """Test successful direct model load."""
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
 
-            result = manager._load_direct(
-                model_file,
-                {"n_ctx": 2048, "n_gpu_layers": 0}
-            )
+            result = manager._load_direct(model_file, {"n_ctx": 2048, "n_gpu_layers": 0})
 
         assert result is True
         assert manager.model is mock_llama_class.return_value
 
-    @patch('llm_manager.core.LLAMA_CPP_AVAILABLE', False)
+    @patch("llm_manager.core.LLAMA_CPP_AVAILABLE", False)
     def test_load_direct_not_available(self, tmp_path):
         """Test error when llama-cpp not available."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
 
@@ -402,13 +411,13 @@ class TestLoadModelDirect:
 
             assert "not available" in str(exc_info.value).lower()
 
-    @patch('llm_manager.core.LLAMA_CPP_AVAILABLE', True)
-    @patch('llm_manager.core.Llama')
+    @patch("llm_manager.core.LLAMA_CPP_AVAILABLE", True)
+    @patch("llm_manager.core.Llama")
     def test_load_direct_failure(self, mock_llama_class, tmp_path):
         """Test error handling on load failure."""
         mock_llama_class.side_effect = Exception("Load failed")
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
 
@@ -422,6 +431,7 @@ class TestLoadModelDirect:
 # Subprocess Load Tests
 # ============================================
 
+
 class TestLoadModelSubprocess:
     """Tests for _load_subprocess."""
 
@@ -430,7 +440,7 @@ class TestLoadModelSubprocess:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=True)
 
@@ -439,10 +449,7 @@ class TestLoadModelSubprocess:
             mock_worker.send_command.return_value = {"success": True}
             manager.worker = mock_worker
 
-            result = manager._load_subprocess(
-                model_file,
-                {"n_ctx": 2048}
-            )
+            result = manager._load_subprocess(model_file, {"n_ctx": 2048})
 
         assert result is True
 
@@ -451,23 +458,33 @@ class TestLoadModelSubprocess:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
 
+            # Create mock workers for the pool
+            mock_worker1 = Mock()
+            mock_worker1.send_command.return_value = {"success": True}
+            mock_worker2 = Mock()
+            mock_worker2.send_command.return_value = {"success": True}
+
             mock_pool = Mock()
+            mock_pool._workers = [mock_worker1, mock_worker2]
             manager.pool = mock_pool
 
             result = manager._load_subprocess(model_file, {"n_ctx": 2048})
 
             mock_pool.start.assert_called_once()
+            # Verify load command was sent to all workers
+            mock_worker1.send_command.assert_called_once()
+            mock_worker2.send_command.assert_called_once()
 
     def test_load_subprocess_worker_creation(self, tmp_path):
         """Test worker creation in sync load."""
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             # Ensure no pool is used
@@ -479,7 +496,7 @@ class TestLoadModelSubprocess:
             mock_worker.is_alive.return_value = True
             mock_worker.send_command.return_value = {"success": True}
 
-            with patch('llm_manager.core.WorkerProcess', return_value=mock_worker):
+            with patch("llm_manager.core.WorkerProcess", return_value=mock_worker):
                 result = manager._load_subprocess(model_file, {"n_ctx": 2048})
 
                 assert manager.worker is mock_worker
@@ -489,7 +506,7 @@ class TestLoadModelSubprocess:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -507,7 +524,7 @@ class TestLoadModelSubprocess:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -525,7 +542,7 @@ class TestLoadModelSubprocess:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -543,7 +560,7 @@ class TestLoadModelSubprocess:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -557,9 +574,9 @@ class TestLoadModelSubprocess:
 
             assert "subprocess load error" in caplog.text.lower()
 
-    def test_resolve_model_path_external_not_exist(self, tmp_path):
-        """Test external path that doesn't exist."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+    def test_resolve_model_path_external_blocked(self, tmp_path):
+        """Test external path is blocked for security (P0 fix)."""
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -568,12 +585,14 @@ class TestLoadModelSubprocess:
             with pytest.raises(ModelNotFoundError) as exc_info:
                 manager._resolve_model_path(external_path)
 
-            assert "not found" in str(exc_info.value).lower()
+            # Security: External paths are blocked before checking existence
+            assert "access denied" in str(exc_info.value).lower()
 
 
 # ============================================
 # Async Load Tests
 # ============================================
+
 
 class TestAsyncLoad:
     """Tests for async load methods."""
@@ -584,11 +603,11 @@ class TestAsyncLoad:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
 
-            with patch.object(manager, '_load_direct', return_value=True):
+            with patch.object(manager, "_load_direct", return_value=True):
                 result = await manager.load_model_async("model.gguf")
                 assert result is True
 
@@ -598,17 +617,27 @@ class TestAsyncLoad:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
 
+            # Create mock workers for the pool
+            mock_worker1 = Mock()
+            mock_worker1.send_command = AsyncMock(return_value={"success": True})
+            mock_worker2 = Mock()
+            mock_worker2.send_command = AsyncMock(return_value={"success": True})
+
             mock_pool = Mock()
             mock_pool.start = AsyncMock()
+            mock_pool._workers = [mock_worker1, mock_worker2]
             manager.async_pool = mock_pool
 
             result = await manager._load_subprocess_async(model_file, {"n_ctx": 2048})
 
             mock_pool.start.assert_called_once()
+            # Verify load command was sent to all workers
+            mock_worker1.send_command.assert_called_once()
+            mock_worker2.send_command.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_load_subprocess_async_worker_command(self, tmp_path):
@@ -616,12 +645,14 @@ class TestAsyncLoad:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
             mock_worker = Mock()
-            mock_worker.send_command = AsyncMock(return_value={"success": False, "error": "Load failed"})
+            mock_worker.send_command = AsyncMock(
+                return_value={"success": False, "error": "Load failed"}
+            )
             mock_worker.start = AsyncMock()
             manager.async_worker = mock_worker
 
@@ -636,7 +667,7 @@ class TestAsyncLoad:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -656,7 +687,7 @@ class TestAsyncLoad:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -675,7 +706,7 @@ class TestAsyncLoad:
     async def test_core_load_model_async_not_found(self, tmp_path):
         """Cover ModelNotFoundError in load_model_async."""
         # Ensure registry is initialized (mocked)
-        with patch('llm_manager.core.ModelRegistry') as mock_registry_cls:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry_cls:
             mock_registry = Mock()
             mock_registry_cls.return_value = mock_registry
             manager = LLMManager(models_dir=str(tmp_path))
@@ -691,12 +722,13 @@ class TestAsyncLoad:
 # Generation Tests
 # ============================================
 
+
 class TestGenerate:
     """Tests for generate()."""
 
     def test_generate_not_loaded(self, tmp_path):
         """Test error when no model loaded."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -710,7 +742,7 @@ class TestGenerate:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=True)
             manager.model_path = model_file
@@ -721,7 +753,7 @@ class TestGenerate:
             mock_worker.is_alive.return_value = True
             mock_worker.send_command.return_value = {
                 "success": True,
-                "response": {"choices": [{"message": {"content": "Hi!"}}]}
+                "response": {"choices": [{"message": {"content": "Hi!"}}]},
             }
             manager.worker = mock_worker
 
@@ -732,10 +764,9 @@ class TestGenerate:
     def test_core_generate_failure(self, tmp_path):
         """Cover generate failure paths in core.py."""
         manager = LLMManager(models_dir=str(tmp_path))
-        with patch.object(manager, '_generate_subprocess', side_effect=Exception("Gen error")):
+        with patch.object(manager, "_generate_subprocess", side_effect=Exception("Gen error")):
             with pytest.raises(GenerationError):
                 manager.generate([{"role": "user", "content": "hi"}])
-
 
     def test_core_generate_direct_success_and_fail(self, tmp_path):
         """Cover direct generation."""
@@ -783,8 +814,8 @@ class TestGenerate:
         """Cover _generate_subprocess error paths (core.py lines 738-743)."""
         manager = LLMManager(use_subprocess=True)
         manager.worker = MagicMock()
-        manager.pool = None # Disable pool for direct worker access
-        manager.is_loaded = Mock(return_value=True) # Bypass is_loaded check which checks worker
+        manager.pool = None  # Disable pool for direct worker access
+        manager.is_loaded = Mock(return_value=True)  # Bypass is_loaded check which checks worker
 
         # 1. Verification of success=False
         manager.worker.send_command.return_value = {"success": False, "error": "Planned fail"}
@@ -800,7 +831,7 @@ class TestGenerate:
         """Cover generate() calling _generate_subprocess_streaming (core.py line 570)."""
         manager = LLMManager(use_subprocess=True)
         manager.is_loaded = Mock(return_value=True)
-        manager.worker = MagicMock() # Ensure is_loaded check passes if it checks worker
+        manager.worker = MagicMock()  # Ensure is_loaded check passes if it checks worker
         # Mock internal methods to avoid real execution
         manager._generate_subprocess_streaming = Mock(return_value=iter(["chunk"]))
 
@@ -824,12 +855,14 @@ class TestGenerate:
         with pytest.raises(GenerationError, match="Streaming error: Stream fail"):
             # Consume iterator to trigger execution
             list(manager._generate_subprocess_streaming([], 10, 0.7))
+
+
 class TestBuildCommand:
     """Tests for _build_command helper."""
 
     def test_build_command_basic(self, tmp_path):
         """Test basic command building."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             manager.model_path = Path("/tmp/model.gguf")
@@ -840,7 +873,7 @@ class TestBuildCommand:
                 [{"role": "user", "content": "Hello"}],
                 max_tokens=100,
                 temperature=0.7,
-                stream=False
+                stream=False,
             )
 
         assert command["operation"] == "generate"
@@ -853,12 +886,13 @@ class TestBuildCommand:
 # Unload Tests
 # ============================================
 
+
 class TestUnloadModel:
     """Tests for unload_model()."""
 
     def test_unload_direct_model(self, tmp_path):
         """Test unloading direct model."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
             manager.model = Mock()
@@ -872,12 +906,12 @@ class TestUnloadModel:
 
     def test_unload_torch_cleanup(self, tmp_path):
         """Test torch CUDA cleanup on unload."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
-            with patch('llm_manager.core.TORCH_AVAILABLE', True):
+            with patch("llm_manager.core.TORCH_AVAILABLE", True):
                 mock_torch = Mock()
                 mock_torch.cuda.is_available.return_value = True
-                with patch('llm_manager.core.torch', mock_torch):
+                with patch("llm_manager.core.torch", mock_torch):
                     manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
                     manager.model = Mock()
 
@@ -890,19 +924,20 @@ class TestUnloadModel:
 # Is Loaded Tests
 # ============================================
 
+
 class TestIsLoaded:
     """Tests for is_loaded()."""
 
     def test_not_loaded_initially(self, tmp_path):
         """Test not loaded initially."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             assert manager.is_loaded() is False
 
     def test_loaded_direct(self, tmp_path):
         """Test loaded with direct model."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
             manager.model = Mock()
@@ -910,7 +945,7 @@ class TestIsLoaded:
 
     def test_loaded_subprocess(self, tmp_path):
         """Test loaded with subprocess."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=True)
             manager.model_path = Path("/tmp/model.gguf")
@@ -920,7 +955,6 @@ class TestIsLoaded:
             manager.worker = mock_worker
 
             assert manager.is_loaded() is True
-
 
     def test_is_loaded_complex_logic(self):
         """Cover complex is_loaded logic (core.py line 500 etc)."""
@@ -942,16 +976,19 @@ class TestIsLoaded:
         manager.async_worker = MagicMock()
         manager.async_worker.is_alive.return_value = True
         assert manager.is_loaded() is True
+
+
 # ============================================
 # Context Stats Tests
 # ============================================
+
 
 class TestContextStats:
     """Tests for get_context_stats()."""
 
     def test_stats_not_loaded(self, tmp_path):
         """Test stats when not loaded."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             stats = manager.get_context_stats()
@@ -963,14 +1000,19 @@ class TestContextStats:
         mock_registry_instance = Mock()
         mock_registry_instance.get_max_context.return_value = 32768
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry_class:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry_class:
             mock_registry_class.return_value = mock_registry_instance
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=True)
 
-            with patch.object(manager, 'is_loaded', return_value=True):
+            with patch.object(manager, "is_loaded", return_value=True):
                 manager.model_name = "test"
                 manager.model_path = Path("/tmp/model.gguf")
-                manager.model_config = {"n_ctx": 4096, "n_batch": 512, "n_ubatch": 256, "flash_attn": True}
+                manager.model_config = {
+                    "n_ctx": 4096,
+                    "n_batch": 512,
+                    "n_ubatch": 256,
+                    "flash_attn": True,
+                }
                 manager._last_used_tokens = 1000
                 manager._conversation_type = ConversationType.CHAT
 
@@ -986,55 +1028,55 @@ class TestContextStats:
     def test_print_context_stats(self, tmp_path):
         """Cover print_context_stats."""
         manager = LLMManager(models_dir=str(tmp_path))
-        with patch('builtins.print') as mock_print:
+        with patch("builtins.print") as mock_print:
             manager.print_context_stats()
+
     def test_core_get_context_stats_edge_cases(self, tmp_path):
-         """Cover get_context_stats edge cases."""
-         manager = LLMManager(models_dir=str(tmp_path))
-         stats = manager.get_context_stats()
-         assert stats.utilization_percent == 0.0
+        """Cover get_context_stats edge cases."""
+        manager = LLMManager(models_dir=str(tmp_path))
+        stats = manager.get_context_stats()
+        assert stats.utilization_percent == 0.0
 
-         manager.registry = Mock()
-         manager.registry.get_max_context.return_value = 16384
+        manager.registry = Mock()
+        manager.registry.get_max_context.return_value = 16384
 
-         with patch.object(manager, 'is_loaded', return_value=True):
-             manager.model_name = "test"
-             manager.model_config = {"n_ctx": 0}
-             manager._last_used_tokens = 0
+        with patch.object(manager, "is_loaded", return_value=True):
+            manager.model_name = "test"
+            manager.model_config = {"n_ctx": 0}
+            manager._last_used_tokens = 0
 
-             stats = manager.get_context_stats()
-             assert stats.utilization_percent == 0.0
+            stats = manager.get_context_stats()
+            assert stats.utilization_percent == 0.0
 
 
 # ============================================
 # Token Estimation Tests
 # ============================================
 
+
 class TestEstimateTokens:
     """Tests for estimate_tokens()."""
 
     def test_estimate_heuristic(self, tmp_path):
         """Test heuristic estimation."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
             estimate = manager.estimate_tokens(
-                [{"role": "user", "content": "Hello world"}],
-                use_heuristic=True
+                [{"role": "user", "content": "Hello world"}], use_heuristic=True
             )
 
         assert estimate.total_tokens > 0
 
     def test_estimate_accurate_fallback(self, tmp_path):
         """Test accurate estimation falls back to heuristic."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
             estimate = manager.estimate_tokens(
-                [{"role": "user", "content": "Hello world"}],
-                use_heuristic=False
+                [{"role": "user", "content": "Hello world"}], use_heuristic=False
             )
 
         assert estimate.total_tokens > 0
@@ -1044,18 +1086,19 @@ class TestEstimateTokens:
 # VRAM Tests
 # ============================================
 
+
 class TestVRAM:
     """Tests for VRAM detection."""
 
     def test_vram_torch_available(self, tmp_path):
         """Test VRAM detection with torch."""
-        with patch('llm_manager.core.TORCH_AVAILABLE', True):
+        with patch("llm_manager.core.TORCH_AVAILABLE", True):
             mock_torch = Mock()
             mock_torch.cuda.is_available.return_value = True
             mock_torch.cuda.mem_get_info.return_value = (8e9, 16e9)
 
-            with patch('llm_manager.core.torch', mock_torch):
-                with patch('llm_manager.core.ModelRegistry') as mock_registry:
+            with patch("llm_manager.core.torch", mock_torch):
+                with patch("llm_manager.core.ModelRegistry") as mock_registry:
                     mock_registry.return_value = None
                     manager = LLMManager(models_dir=str(tmp_path))
                     vram = manager._get_vram_gb()
@@ -1064,8 +1107,8 @@ class TestVRAM:
 
     def test_vram_torch_not_available(self, tmp_path):
         """Test VRAM detection without torch."""
-        with patch('llm_manager.core.TORCH_AVAILABLE', False):
-            with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.TORCH_AVAILABLE", False):
+            with patch("llm_manager.core.ModelRegistry") as mock_registry:
                 mock_registry.return_value = None
                 manager = LLMManager(models_dir=str(tmp_path))
                 vram = manager._get_vram_gb()
@@ -1074,12 +1117,12 @@ class TestVRAM:
 
     def test_vram_cuda_not_available(self, tmp_path):
         """Test VRAM when CUDA not available."""
-        with patch('llm_manager.core.TORCH_AVAILABLE', True):
+        with patch("llm_manager.core.TORCH_AVAILABLE", True):
             mock_torch = Mock()
             mock_torch.cuda.is_available.return_value = False
 
-            with patch('llm_manager.core.torch', mock_torch):
-                with patch('llm_manager.core.ModelRegistry') as mock_registry:
+            with patch("llm_manager.core.torch", mock_torch):
+                with patch("llm_manager.core.ModelRegistry") as mock_registry:
                     mock_registry.return_value = None
                     manager = LLMManager(models_dir=str(tmp_path))
                     vram = manager._get_vram_gb()
@@ -1088,13 +1131,13 @@ class TestVRAM:
 
     def test_vram_exception(self, tmp_path):
         """Cover VRAM detection exception."""
-        with patch('llm_manager.core.TORCH_AVAILABLE', True):
+        with patch("llm_manager.core.TORCH_AVAILABLE", True):
             mock_torch = Mock()
             mock_torch.cuda.is_available.return_value = True
             mock_torch.cuda.mem_get_info.side_effect = Exception("CUDA Error")
 
-            with patch('llm_manager.core.torch', mock_torch):
-                with patch('llm_manager.core.ModelRegistry') as mock_registry:
+            with patch("llm_manager.core.torch", mock_torch):
+                with patch("llm_manager.core.ModelRegistry") as mock_registry:
                     mock_registry.return_value = None
                     manager = LLMManager(models_dir=str(tmp_path))
                     vram = manager._get_vram_gb()
@@ -1106,12 +1149,13 @@ class TestVRAM:
 # Cleanup Tests
 # ============================================
 
+
 class TestCleanup:
     """Tests for cleanup methods."""
 
     def test_cleanup_sync(self, tmp_path):
         """Test synchronous cleanup."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
 
@@ -1125,7 +1169,7 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_async(self, tmp_path):
         """Test asynchronous cleanup."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
 
@@ -1143,11 +1187,11 @@ class TestCleanup:
         manager = LLMManager(models_dir=str(tmp_path))
         manager.worker_pool = Mock()
         manager.worker_pool.shutdown = AsyncMock(side_effect=Exception("Pool error"))
-        await manager.async_cleanup() # Should not raise
+        await manager.async_cleanup()  # Should not raise
 
     def test_cleanup_error_logging(self, tmp_path, caplog):
         """Test cleanup error logging."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
 
@@ -1163,7 +1207,7 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_async_cleanup_error_logging(self, tmp_path, caplog):
         """Test async cleanup error logging."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
 
@@ -1178,13 +1222,12 @@ class TestCleanup:
 
     def test_del_exception_handling(self, tmp_path):
         """Test __del__ exception handling."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
-            with patch.object(manager, 'cleanup', side_effect=Exception("Cleanup failed")):
+            with patch.object(manager, "cleanup", side_effect=Exception("Cleanup failed")):
                 manager.__del__()
-
 
     def test_core_cleanup_logging_debug(self, tmp_path):
         """Cover extensive cleanup logging."""
@@ -1194,16 +1237,19 @@ class TestCleanup:
         manager.worker = Mock()
         manager.async_worker = Mock()
         manager.cleanup()
+
+
 # ============================================
 # Repr Tests
 # ============================================
+
 
 class TestRepr:
     """Tests for __repr__."""
 
     def test_repr_not_loaded(self, tmp_path):
         """Test repr when not loaded."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
 
@@ -1213,7 +1259,7 @@ class TestRepr:
 
     def test_repr_loaded(self, tmp_path):
         """Test repr when loaded."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path))
             manager.model_name = "test-model"
@@ -1227,15 +1273,16 @@ class TestRepr:
 # Context Manager Tests
 # ============================================
 
+
 class TestContextManagerProtocol:
     """Tests for context manager protocol."""
 
     def test_sync_context_manager(self, tmp_path):
         """Test synchronous context manager."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
 
-            with patch.object(LLMManager, 'cleanup') as mock_cleanup:
+            with patch.object(LLMManager, "cleanup") as mock_cleanup:
                 with LLMManager(models_dir=str(tmp_path)) as manager:
                     pass
 
@@ -1244,10 +1291,12 @@ class TestContextManagerProtocol:
     @pytest.mark.asyncio
     async def test_async_context_manager(self, tmp_path):
         """Test asynchronous context manager."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
 
-            with patch.object(LLMManager, 'async_cleanup', new_callable=lambda: AsyncMock()) as mock_cleanup:
+            with patch.object(
+                LLMManager, "async_cleanup", new_callable=lambda: AsyncMock()
+            ) as mock_cleanup:
                 async with LLMManager(models_dir=str(tmp_path)) as manager:
                     pass
 
@@ -1258,6 +1307,7 @@ class TestContextManagerProtocol:
 # Async Generation Tests
 # ============================================
 
+
 class TestAsyncGenerate:
     """Tests for async generation."""
 
@@ -1267,7 +1317,7 @@ class TestAsyncGenerate:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), use_subprocess=True)
             manager.model_path = model_file
@@ -1276,10 +1326,12 @@ class TestAsyncGenerate:
 
             mock_worker = Mock()
             mock_worker.is_alive = Mock(return_value=True)
-            mock_worker.send_command = AsyncMock(return_value={
-                "success": True,
-                "response": {"choices": [{"message": {"content": "Hi!"}}]}
-            })
+            mock_worker.send_command = AsyncMock(
+                return_value={
+                    "success": True,
+                    "response": {"choices": [{"message": {"content": "Hi!"}}]},
+                }
+            )
             manager.async_worker = mock_worker
 
             result = await manager.generate_async([{"role": "user", "content": "Hello"}])
@@ -1292,7 +1344,7 @@ class TestAsyncGenerate:
         model_file = tmp_path / "model.gguf"
         model_file.write_bytes(b"GGUF" + b"\x00" * 100)
 
-        with patch('llm_manager.core.ModelRegistry') as mock_registry:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry:
             mock_registry.return_value = None
             manager = LLMManager(models_dir=str(tmp_path), pool_size=2)
             manager.model_path = model_file
@@ -1300,10 +1352,12 @@ class TestAsyncGenerate:
             manager.model_config = {"n_ctx": 2048}
 
             mock_worker = Mock()
-            mock_worker.send_command = AsyncMock(return_value={
-                "success": True,
-                "response": {"choices": [{"message": {"content": "Hi!"}}]}
-            })
+            mock_worker.send_command = AsyncMock(
+                return_value={
+                    "success": True,
+                    "response": {"choices": [{"message": {"content": "Hi!"}}]},
+                }
+            )
 
             mock_pool = Mock()
             mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_worker)
@@ -1311,13 +1365,10 @@ class TestAsyncGenerate:
             manager.async_pool = mock_pool
 
             result = await manager._generate_subprocess_async(
-                [{"role": "user", "content": "Hello"}],
-                max_tokens=100,
-                temperature=0.7
+                [{"role": "user", "content": "Hello"}], max_tokens=100, temperature=0.7
             )
 
         assert result["choices"][0]["message"]["content"] == "Hi!"
-
 
     @pytest.mark.asyncio
     async def test_core_generate_async_coverage(self, tmp_path):
@@ -1348,7 +1399,7 @@ class TestAsyncGenerate:
         # Mock generator raising exception
         async def fail_gen(*args, **kwargs):
             raise Exception("Stream Boom")
-            yield "chunk" # unreachable
+            yield "chunk"  # unreachable
 
         manager.async_worker.send_streaming_command_gen = fail_gen
         msgs = [{"role": "user", "content": "hi"}]
@@ -1380,21 +1431,25 @@ class TestAsyncGenerate:
         async for c in manager._generate_subprocess_streaming_async(msgs, 100, 0.7):
             chunks.append(c)
         assert chunks == ["chunk1"]
+
+
 # ============================================
 # Import Warning Tests
 # ============================================
+
 
 class TestImportWarnings:
     """Test import warning lines."""
 
     def test_llama_cpp_import_warning(self, caplog):
         """Test warning when llama_cpp not available."""
-        import sys
         import importlib
+        import sys
+
         import llm_manager.core
 
         # simulated import error
-        with patch.dict(sys.modules, {'llama_cpp': None}):
+        with patch.dict(sys.modules, {"llama_cpp": None}):
             importlib.reload(llm_manager.core)
             assert llm_manager.core.LLAMA_CPP_AVAILABLE is False
             # Check for the warning emitted at module level
@@ -1406,12 +1461,13 @@ class TestImportWarnings:
 
     def test_torch_import_warning(self, caplog):
         """Test torch import handling."""
-        import sys
         import importlib
+        import sys
+
         import llm_manager.core
 
         # simulated import error
-        with patch.dict(sys.modules, {'torch': None}):
+        with patch.dict(sys.modules, {"torch": None}):
             importlib.reload(llm_manager.core)
             assert llm_manager.core.TORCH_AVAILABLE is False
 
@@ -1425,22 +1481,30 @@ class TestSyncLoadModel:
     def test_load_model_direct(self, tmp_path):
         """Test load_model calls _load_direct."""
         manager = LLMManager(models_dir=str(tmp_path), use_subprocess=False)
-        with patch.object(manager, '_load_direct', return_value=True) as mock_load:
-            with patch.object(manager, '_prepare_load_config', return_value=(Path("model"), {'n_ctx': 2048, 'n_batch': 512, 'n_gpu_layers': 0})):
+        with patch.object(manager, "_load_direct", return_value=True) as mock_load:
+            with patch.object(
+                manager,
+                "_prepare_load_config",
+                return_value=(Path("model"), {"n_ctx": 2048, "n_batch": 512, "n_gpu_layers": 0}),
+            ):
                 manager.load_model("model")
                 mock_load.assert_called_once()
 
     def test_load_model_subprocess(self, tmp_path):
         """Test load_model calls _load_subprocess."""
         manager = LLMManager(models_dir=str(tmp_path), use_subprocess=True)
-        with patch.object(manager, '_load_subprocess', return_value=True) as mock_load:
-            with patch.object(manager, '_prepare_load_config', return_value=(Path("model"), {'n_ctx': 2048, 'n_batch': 512, 'n_gpu_layers': 0})):
+        with patch.object(manager, "_load_subprocess", return_value=True) as mock_load:
+            with patch.object(
+                manager,
+                "_prepare_load_config",
+                return_value=(Path("model"), {"n_ctx": 2048, "n_batch": 512, "n_gpu_layers": 0}),
+            ):
                 manager.load_model("model")
                 mock_load.assert_called_once()
 
     def test_prepare_load_config_registry_error(self, tmp_path, caplog):
         """Cover registry.get exception in _prepare_load_config."""
-        with patch('llm_manager.core.ModelRegistry') as mock_registry_cls:
+        with patch("llm_manager.core.ModelRegistry") as mock_registry_cls:
             mock_registry = Mock()
             mock_registry_cls.return_value = mock_registry
             manager = LLMManager(models_dir=str(tmp_path))
@@ -1450,10 +1514,11 @@ class TestSyncLoadModel:
             manager.registry = mock_registry
 
             # Setup necessary mocks to bypass other checks
-            with patch.object(manager, '_resolve_model_path', return_value=Path("model")), \
-                 patch('llm_manager.core.validate_model_path'), \
-                 patch('llm_manager.core.logger') as mock_logger:
-
+            with (
+                patch.object(manager, "_resolve_model_path", return_value=Path("model")),
+                patch("llm_manager.core.validate_model_path"),
+                patch("llm_manager.core.logger") as mock_logger,
+            ):
                 manager._prepare_load_config("model")
 
                 # Check logger
@@ -1463,129 +1528,131 @@ class TestSyncLoadModel:
 
 class TestScanModelsIntegration:
     """Integration tests for scan_models (lines 936-953)."""
-    
+
     def test_scan_models_integration(self, tmp_path):
         """Test scan_models method with actual scanner."""
         models_dir = tmp_path / "models"
         models_dir.mkdir()
-        
+
         # Create a proper fake GGUF file with metadata
         import struct
+
         from llm_manager.scanner import GGUFConstants
-        
+
         gguf_file = models_dir / "test-model.gguf"
-        
+
         # Build minimal valid GGUF file
         data = b"GGUF"
         data += struct.pack("<I", 3)  # Version 3
         data += struct.pack("<Q", 0)  # tensor_count
         data += struct.pack("<Q", 2)  # metadata_count
-        
+
         # Add architecture
         key = b"general.architecture"
         data += struct.pack("<Q", len(key)) + key
         data += struct.pack("<I", GGUFConstants.STRING)
         value = b"llama"
         data += struct.pack("<Q", len(value)) + value
-        
+
         # Add size label
         key = b"general.size_label"
         data += struct.pack("<Q", len(key)) + key
         data += struct.pack("<I", GGUFConstants.STRING)
         value = b"7B"
         data += struct.pack("<Q", len(value)) + value
-        
+
         gguf_file.write_bytes(data)
-        
+
         manager = LLMManager(models_dir=str(models_dir), enable_registry=False)
-        
+
         results = manager.scan_models(test_context=False)
-        
+
         # Should find the model and return results
         assert "models_found" in results
         assert results["models_found"] == 1
-    
+
     def test_scan_models_with_registry_reload(self, tmp_path):
         """Test scan_models reloads registry after scan."""
         models_dir = tmp_path / "models"
         models_dir.mkdir()
-        
+
         # Create a proper fake GGUF file with metadata
         import struct
+
         from llm_manager.scanner import GGUFConstants
-        
+
         gguf_file = models_dir / "test-model.gguf"
-        
+
         data = b"GGUF"
         data += struct.pack("<I", 3)
         data += struct.pack("<Q", 0)
         data += struct.pack("<Q", 2)
-        
+
         key = b"general.architecture"
         data += struct.pack("<Q", len(key)) + key
         data += struct.pack("<I", GGUFConstants.STRING)
         value = b"llama"
         data += struct.pack("<Q", len(value)) + value
-        
+
         key = b"general.size_label"
         data += struct.pack("<Q", len(key)) + key
         data += struct.pack("<I", GGUFConstants.STRING)
         value = b"7B"
         data += struct.pack("<Q", len(value)) + value
-        
+
         gguf_file.write_bytes(data)
-        
+
         # Pre-create registry file
         registry_file = models_dir / "models.json"
-        registry_file.write_text('{}')
-        
+        registry_file.write_text("{}")
+
         manager = LLMManager(models_dir=str(models_dir))
-        
-        with patch.object(manager.registry, 'load') as mock_reload:
+
+        with patch.object(manager.registry, "load") as mock_reload:
             results = manager.scan_models(test_context=False)
-            
+
             # Registry should be reloaded after scan
             mock_reload.assert_called_once()
             assert results["models_found"] == 1
-    
+
     def test_scan_models_async_integration(self, tmp_path):
         """Test scan_models_async wraps scan_models correctly."""
-        import asyncio
         import struct
+
         from llm_manager.scanner import GGUFConstants
-        
+
         models_dir = tmp_path / "models"
         models_dir.mkdir()
-        
+
         # Create a proper fake GGUF file with metadata
         gguf_file = models_dir / "test-model.gguf"
-        
+
         data = b"GGUF"
         data += struct.pack("<I", 3)
         data += struct.pack("<Q", 0)
         data += struct.pack("<Q", 2)
-        
+
         key = b"general.architecture"
         data += struct.pack("<Q", len(key)) + key
         data += struct.pack("<I", GGUFConstants.STRING)
         value = b"llama"
         data += struct.pack("<Q", len(value)) + value
-        
+
         key = b"general.size_label"
         data += struct.pack("<Q", len(key)) + key
         data += struct.pack("<I", GGUFConstants.STRING)
         value = b"7B"
         data += struct.pack("<Q", len(value)) + value
-        
+
         gguf_file.write_bytes(data)
-        
+
         manager = LLMManager(models_dir=str(models_dir), enable_registry=False)
-        
+
         async def run_test():
             results = await manager.scan_models_async(test_context=False)
             return results
-        
+
         results = asyncio.run(run_test())
-        
+
         assert "models_found" in results
         assert results["models_found"] == 1

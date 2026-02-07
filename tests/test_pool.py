@@ -2,13 +2,11 @@
 Tests for llm_manager/pool.py - Worker process pool.
 """
 
-import asyncio
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from llm_manager.pool import WorkerPool, AsyncWorkerPool, DEFAULT_POOL_SIZE
-from llm_manager.workers import WorkerProcess, AsyncWorkerProcess
+from llm_manager.pool import DEFAULT_POOL_SIZE, AsyncWorkerPool, WorkerPool
 
 
 class TestWorkerPoolInit:
@@ -40,7 +38,7 @@ class TestWorkerPoolInit:
 class TestWorkerPoolStart:
     """Tests for WorkerPool.start()."""
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_start_creates_workers(self, mock_worker_class):
         """Test start creates worker processes."""
         mock_worker = Mock()
@@ -52,7 +50,7 @@ class TestWorkerPoolStart:
         assert pool._started is True
         assert mock_worker_class.call_count == 3
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_start_idempotent(self, mock_worker_class):
         """Test start is idempotent."""
         mock_worker = Mock()
@@ -68,7 +66,7 @@ class TestWorkerPoolStart:
 class TestWorkerPoolAcquire:
     """Tests for WorkerPool.acquire()."""
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_acquire_gets_worker(self, mock_worker_class):
         """Test acquire returns a worker."""
         mock_worker = Mock()
@@ -79,7 +77,7 @@ class TestWorkerPoolAcquire:
         with pool.acquire() as worker:
             assert worker is mock_worker
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_acquire_auto_starts(self, mock_worker_class):
         """Test acquire auto-starts pool if not started."""
         mock_worker = Mock()
@@ -96,7 +94,7 @@ class TestWorkerPoolAcquire:
 class TestWorkerPoolShutdown:
     """Tests for WorkerPool.shutdown()."""
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_shutdown_stops_workers(self, mock_worker_class):
         """Test shutdown stops all workers."""
         mock_worker = Mock()
@@ -118,7 +116,7 @@ class TestWorkerPoolShutdown:
 class TestWorkerPoolContextManager:
     """Tests for WorkerPool context manager."""
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_context_manager(self, mock_worker_class):
         """Test context manager starts and shuts down."""
         mock_worker = Mock()
@@ -150,10 +148,11 @@ class TestAsyncWorkerPoolStart:
     """Tests for AsyncWorkerPool.start()."""
 
     @pytest.mark.asyncio
-    @patch('llm_manager.pool.AsyncWorkerProcess')
+    @patch("llm_manager.pool.AsyncWorkerProcess")
     async def test_start_creates_workers(self, mock_worker_class):
         """Test start creates async workers."""
         mock_worker = Mock()
+        mock_worker.start = AsyncMock()  # Support await worker.start()
         mock_worker_class.return_value = mock_worker
 
         pool = AsyncWorkerPool(size=3)
@@ -161,12 +160,14 @@ class TestAsyncWorkerPoolStart:
 
         assert pool._started is True
         assert mock_worker_class.call_count == 3
+        assert mock_worker.start.call_count == 3  # Verify start was called
 
     @pytest.mark.asyncio
-    @patch('llm_manager.pool.AsyncWorkerProcess')
+    @patch("llm_manager.pool.AsyncWorkerProcess")
     async def test_start_idempotent(self, mock_worker_class):
         """Test start is idempotent."""
         mock_worker = Mock()
+        mock_worker.start = AsyncMock()  # Support await worker.start()
         mock_worker_class.return_value = mock_worker
 
         pool = AsyncWorkerPool(size=2)
@@ -180,10 +181,11 @@ class TestAsyncWorkerPoolAcquire:
     """Tests for AsyncWorkerPool.acquire()."""
 
     @pytest.mark.asyncio
-    @patch('llm_manager.pool.AsyncWorkerProcess')
+    @patch("llm_manager.pool.AsyncWorkerProcess")
     async def test_acquire_gets_worker(self, mock_worker_class):
         """Test acquire returns a worker."""
         mock_worker = Mock()
+        mock_worker.start = AsyncMock()  # Support await worker.start()
         mock_worker_class.return_value = mock_worker
 
         pool = AsyncWorkerPool(size=2)
@@ -193,10 +195,11 @@ class TestAsyncWorkerPoolAcquire:
             assert worker is mock_worker
 
     @pytest.mark.asyncio
-    @patch('llm_manager.pool.AsyncWorkerProcess')
+    @patch("llm_manager.pool.AsyncWorkerProcess")
     async def test_acquire_auto_starts(self, mock_worker_class):
         """Test acquire auto-starts pool if not started."""
         mock_worker = Mock()
+        mock_worker.start = AsyncMock()  # Support await worker.start()
         mock_worker_class.return_value = mock_worker
 
         pool = AsyncWorkerPool(size=2)
@@ -211,10 +214,11 @@ class TestAsyncWorkerPoolShutdown:
     """Tests for AsyncWorkerPool.shutdown()."""
 
     @pytest.mark.asyncio
-    @patch('llm_manager.pool.AsyncWorkerProcess')
+    @patch("llm_manager.pool.AsyncWorkerProcess")
     async def test_shutdown_stops_workers(self, mock_worker_class):
         """Test shutdown stops all workers."""
         mock_worker = Mock()
+        mock_worker.start = AsyncMock()  # Support await worker.start()
         mock_worker.stop = AsyncMock()
         mock_worker_class.return_value = mock_worker
 
@@ -238,11 +242,11 @@ class TestAsyncWorkerPoolContextManager:
     async def test_async_context_manager(self):
         """Test async context manager starts and shuts down."""
         pool = AsyncWorkerPool(size=2)
-        
+
         # Mock the start and stop methods
         pool.start = AsyncMock()
         pool.shutdown = AsyncMock()
-        
+
         async with pool:
             pass
 
@@ -250,7 +254,7 @@ class TestAsyncWorkerPoolContextManager:
 class TestPoolConcurrency:
     """Tests for concurrent pool usage."""
 
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.WorkerProcess")
     def test_multiple_acquires(self, mock_worker_class):
         """Test multiple concurrent acquisitions."""
         workers = [Mock() for _ in range(3)]
@@ -285,8 +289,8 @@ class TestPoolEdgeCases:
 class TestPoolLogging:
     """Tests for pool logging."""
 
-    @patch('llm_manager.pool.logger')
-    @patch('llm_manager.pool.WorkerProcess')
+    @patch("llm_manager.pool.logger")
+    @patch("llm_manager.pool.WorkerProcess")
     def test_start_logging(self, mock_worker_class, mock_logger):
         """Test logging on pool start."""
         mock_worker_class.return_value = Mock()
@@ -296,7 +300,7 @@ class TestPoolLogging:
 
         mock_logger.info.assert_called()
 
-    @patch('llm_manager.pool.logger')
+    @patch("llm_manager.pool.logger")
     def test_debug_logging_on_init(self, mock_logger):
         """Test debug logging on initialization."""
         pool = WorkerPool(size=4)

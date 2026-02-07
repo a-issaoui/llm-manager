@@ -2,18 +2,17 @@
 Tests for llm_manager/exceptions.py - Custom exceptions.
 """
 
-import pytest
 
 from llm_manager.exceptions import (
+    ContextError,
+    GenerationError,
     LLMManagerError,
     ModelLoadError,
     ModelNotFoundError,
-    GenerationError,
+    ResourceError,
+    ValidationError,
     WorkerError,
     WorkerTimeoutError,
-    ContextError,
-    ValidationError,
-    ResourceError,
 )
 
 

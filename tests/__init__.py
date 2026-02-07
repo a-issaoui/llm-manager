@@ -7,5 +7,5 @@ import warnings
 warnings.filterwarnings(
     "ignore",
     message="coroutine 'AsyncMockMixin._execute_mock_call' was never awaited",
-    category=RuntimeWarning
+    category=RuntimeWarning,
 )

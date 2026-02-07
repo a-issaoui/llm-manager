@@ -2,14 +2,15 @@
 Tests for llm_manager/estimation.py - Token estimation.
 """
 
-import pytest
 from unittest.mock import Mock, patch
 
+import pytest
+
 from llm_manager.estimation import (
-    TokenEstimator,
-    TokenEstimate,
     ContentType,
     ConversationType,
+    TokenEstimate,
+    TokenEstimator,
     detect_conversation_type,
 )
 from llm_manager.exceptions import ValidationError
@@ -26,7 +27,7 @@ class TestTokenEstimate:
             template_tokens=30,
             special_tokens=20,
             content_type=ContentType.TEXT,
-            is_accurate=False
+            is_accurate=False,
         )
 
         assert estimate.total_tokens == 100
@@ -40,7 +41,7 @@ class TestTokenEstimate:
             template_tokens=30,
             special_tokens=20,
             content_type=ContentType.TEXT,
-            is_accurate=True
+            is_accurate=True,
         )
 
         repr_str = repr(estimate)
@@ -101,13 +102,15 @@ class TestTokenEstimator:
     def test_heuristic_multimodal_list(self):
         """Test estimation with multimodal list content."""
         estimator = TokenEstimator()
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Hello"},
-                {"type": "image", "image_url": "..."}
-            ]
-        }]
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "image", "image_url": "..."},
+                ],
+            }
+        ]
 
         estimate = estimator.estimate_heuristic(messages)
         assert estimate.content_type == ContentType.IMAGE
@@ -196,7 +199,9 @@ class TestTokenEstimator:
         mock_tokenizer = Mock()
         mock_tokenizer.encode.return_value = list(range(10))
 
-        estimate = estimator.estimate_accurate(messages, mock_tokenizer, template="{role}: {content}")
+        estimate = estimator.estimate_accurate(
+            messages, mock_tokenizer, template="{role}: {content}"
+        )
 
         assert estimate.is_accurate is True
 
@@ -279,9 +284,7 @@ class TestDetectConversationType:
 
     def test_detect_reasoning(self):
         """Test reasoning detection."""
-        messages = [
-            {"role": "user", "content": "Let's think step by step about this problem"}
-        ]
+        messages = [{"role": "user", "content": "Let's think step by step about this problem"}]
         conv_type = detect_conversation_type(messages)
         assert conv_type == ConversationType.REASONING
 
@@ -310,8 +313,8 @@ class TestDetectConversationType:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": "What's in this image?"},
-                    {"type": "image_url", "image_url": "..."}
-                ]
+                    {"type": "image_url", "image_url": "..."},
+                ],
             }
         ]
         conv_type = detect_conversation_type(messages)
@@ -319,9 +322,7 @@ class TestDetectConversationType:
 
     def test_detect_multimodal_base64(self):
         """Test multimodal detection via base64."""
-        messages = [
-            {"role": "user", "content": "data:image/png;base64," + "A" * 10000}
-        ]
+        messages = [{"role": "user", "content": "data:image/png;base64," + "A" * 10000}]
         conv_type = detect_conversation_type(messages)
         assert conv_type == ConversationType.MULTIMODAL
 
@@ -329,7 +330,7 @@ class TestDetectConversationType:
         """Test tool detection via tool role."""
         messages = [
             {"role": "user", "content": "Call a function"},
-            {"role": "tool", "content": "{\"result\": 42}"}
+            {"role": "tool", "content": '{"result": 42}'},
         ]
         conv_type = detect_conversation_type(messages)
         assert conv_type == ConversationType.TOOL
@@ -338,24 +339,20 @@ class TestDetectConversationType:
         """Test tool detection via function role."""
         messages = [
             {"role": "user", "content": "Call a function"},
-            {"role": "function", "content": "result"}
+            {"role": "function", "content": "result"},
         ]
         conv_type = detect_conversation_type(messages)
         assert conv_type == ConversationType.TOOL
 
     def test_detect_tool_tool_calls(self):
         """Test tool detection via tool_calls."""
-        messages = [
-            {"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]}
-        ]
+        messages = [{"role": "assistant", "content": "", "tool_calls": [{"id": "1"}]}]
         conv_type = detect_conversation_type(messages)
         assert conv_type == ConversationType.TOOL
 
     def test_detect_tool_function_call(self):
         """Test tool detection via function_call."""
-        messages = [
-            {"role": "assistant", "content": "", "function_call": {"name": "test"}}
-        ]
+        messages = [{"role": "assistant", "content": "", "function_call": {"name": "test"}}]
         conv_type = detect_conversation_type(messages)
         assert conv_type == ConversationType.TOOL
 
@@ -383,7 +380,7 @@ class TestTokenEstimatorFeatures:
         db_path = tmp_path / "cache.db"
 
         # Test initialization with disk cache
-        with patch('llm_manager.cache.DiskCache') as MockDiskCache:
+        with patch("llm_manager.cache.DiskCache") as MockDiskCache:
             mock_db = Mock()
             MockDiskCache.return_value = mock_db
 
@@ -391,7 +388,7 @@ class TestTokenEstimatorFeatures:
             messages = [{"role": "user", "content": "hello"}]
 
             # Setup mock behavior
-            mock_db.get.return_value = None # Miss on disk
+            mock_db.get.return_value = None  # Miss on disk
 
             # First call: miss memory, miss disk, compute, save to both
             est1 = estimator.estimate_heuristic(messages)
@@ -425,14 +422,14 @@ class TestTokenEstimatorFeatures:
         estimator = TokenEstimator()
 
         # Code path - force is_code=True for text
-        with patch('llm_manager.estimation.is_code', return_value=True):
+        with patch("llm_manager.estimation.is_code", return_value=True):
             code_text = "def foo(): pass"
             tokens_code = estimator._estimate_text_tokens(code_text)
             assert tokens_code > 0
 
         # CJK path - force is_cjk=True
-        with patch('llm_manager.estimation.is_code', return_value=False):
-            with patch('llm_manager.estimation.is_cjk', return_value=True):
+        with patch("llm_manager.estimation.is_code", return_value=False):
+            with patch("llm_manager.estimation.is_cjk", return_value=True):
                 cjk_text = "こんにちは"
                 tokens_cjk = estimator._estimate_text_tokens(cjk_text)
                 assert tokens_cjk > 0

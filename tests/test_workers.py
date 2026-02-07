@@ -3,29 +3,24 @@ Tests for llm_manager/workers.py - Worker process management.
 """
 
 import asyncio
-import json
 import selectors
 import subprocess
-import tempfile
 import threading
-import time
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, AsyncMock, call
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from llm_manager.exceptions import WorkerError, WorkerTimeoutError
 from llm_manager.workers import (
-    WorkerProcess,
-    AsyncWorkerProcess,
-    _emergency_cleanup,
-    _cleanup_temp_files,
-    _WORKER_PROCESSES,
     _TEMP_FILES,
-    _WORKER_PROCESSES_LOCK,
     _TEMP_FILES_LOCK,
     WORKER_SCRIPT,
+    AsyncWorkerProcess,
+    WorkerProcess,
+    _cleanup_temp_files,
+    _emergency_cleanup,
 )
-from llm_manager.exceptions import WorkerError, WorkerTimeoutError
 
 
 class TestEmergencyCleanup:
@@ -35,7 +30,7 @@ class TestEmergencyCleanup:
         mock_proc = Mock()
         mock_proc.poll.return_value = None
 
-        with patch('llm_manager.workers._WORKER_PROCESSES', [mock_proc]):
+        with patch("llm_manager.workers._WORKER_PROCESSES", [mock_proc]):
             _emergency_cleanup()
             mock_proc.kill.assert_called_once()
 
@@ -44,26 +39,26 @@ class TestEmergencyCleanup:
         mock_proc.poll.return_value = None
         mock_proc.wait.side_effect = subprocess.TimeoutExpired("cmd", 2)
 
-        with patch('llm_manager.workers._WORKER_PROCESSES', [mock_proc]):
+        with patch("llm_manager.workers._WORKER_PROCESSES", [mock_proc]):
             _emergency_cleanup()
             mock_proc.kill.assert_called()
 
     def test_emergency_cleanup_empty(self):
-        with patch('llm_manager.workers._WORKER_PROCESSES', []):
+        with patch("llm_manager.workers._WORKER_PROCESSES", []):
             _emergency_cleanup()
 
     def test_cleanup_temp_files(self, tmp_path):
         temp_file = tmp_path / "test_worker.py"
         temp_file.write_text("test")
 
-        with patch('llm_manager.workers._TEMP_FILES', [temp_file]):
+        with patch("llm_manager.workers._TEMP_FILES", [temp_file]):
             _cleanup_temp_files()
             assert not temp_file.exists()
 
     def test_cleanup_temp_files_handles_missing(self, tmp_path):
         temp_file = tmp_path / "nonexistent.py"
 
-        with patch('llm_manager.workers._TEMP_FILES', [temp_file]):
+        with patch("llm_manager.workers._TEMP_FILES", [temp_file]):
             _cleanup_temp_files()
 
     def test_cleanup_temp_files_error(self, tmp_path):
@@ -71,12 +66,12 @@ class TestEmergencyCleanup:
         temp_file = tmp_path / "denied.py"
         temp_file.write_text("test")
 
-        with patch('llm_manager.workers._TEMP_FILES', [temp_file]):
-            with patch.object(Path, 'unlink', side_effect=OSError("Permission denied")):
+        with patch("llm_manager.workers._TEMP_FILES", [temp_file]):
+            with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
                 _cleanup_temp_files()
 
         # Should clear the list regardless
-        from llm_manager.workers import _TEMP_FILES, _TEMP_FILES_LOCK
+
         with _TEMP_FILES_LOCK:
             assert len(_TEMP_FILES) == 0
 
@@ -85,19 +80,19 @@ class TestWorkerScript:
     """Tests for the worker script template."""
 
     def test_worker_script_contains_idle_timeout_placeholder(self):
-        assert '__IDLE_TIMEOUT__' in WORKER_SCRIPT
+        assert "__IDLE_TIMEOUT__" in WORKER_SCRIPT
 
     def test_worker_script_contains_main_operations(self):
-        assert 'operation' in WORKER_SCRIPT
-        assert 'load' in WORKER_SCRIPT
-        assert 'generate' in WORKER_SCRIPT
-        assert 'unload' in WORKER_SCRIPT
-        assert 'ping' in WORKER_SCRIPT
-        assert 'exit' in WORKER_SCRIPT
+        assert "operation" in WORKER_SCRIPT
+        assert "load" in WORKER_SCRIPT
+        assert "generate" in WORKER_SCRIPT
+        assert "unload" in WORKER_SCRIPT
+        assert "ping" in WORKER_SCRIPT
+        assert "exit" in WORKER_SCRIPT
 
     def test_worker_script_contains_streaming_support(self):
-        assert 'stream' in WORKER_SCRIPT
-        assert 'chunk' in WORKER_SCRIPT
+        assert "stream" in WORKER_SCRIPT
+        assert "chunk" in WORKER_SCRIPT
 
 
 class TestWorkerProcessInit:
@@ -117,8 +112,8 @@ class TestWorkerProcessInit:
 class TestWorkerProcessStart:
     """Tests for WorkerProcess.start()."""
 
-    @patch('subprocess.Popen')
-    @patch('selectors.DefaultSelector')
+    @patch("subprocess.Popen")
+    @patch("selectors.DefaultSelector")
     def test_start_creates_process(self, mock_selector_class, mock_popen, tmp_path):
         mock_proc = Mock()
         mock_proc.poll.return_value = None
@@ -130,13 +125,13 @@ class TestWorkerProcessStart:
         mock_selector_class.return_value = mock_selector
 
         worker = WorkerProcess()
-        with patch.object(worker, '_create_worker_file'):
+        with patch.object(worker, "_create_worker_file"):
             worker.worker_file = tmp_path / "worker.py"
             worker.start()
 
         mock_popen.assert_called_once()
 
-    @patch('subprocess.Popen')
+    @patch("subprocess.Popen")
     def test_start_already_running(self, mock_popen, tmp_path):
         mock_proc = Mock()
         mock_proc.poll.return_value = None
@@ -148,19 +143,19 @@ class TestWorkerProcessStart:
         worker.start()
         mock_popen.assert_not_called()
 
-    @patch('subprocess.Popen')
+    @patch("subprocess.Popen")
     def test_start_failure(self, mock_popen, tmp_path):
         """Test start failure when Popen raises error."""
         mock_popen.side_effect = Exception("Failed to start")
         worker = WorkerProcess()
-        with patch.object(worker, '_create_worker_file'):
+        with patch.object(worker, "_create_worker_file"):
             worker.worker_file = tmp_path / "worker.py"
             with pytest.raises(WorkerError) as exc_info:
                 worker.start()
         assert "Failed to start" in str(exc_info.value)
 
-    @patch('subprocess.Popen')
-    @patch('selectors.DefaultSelector')
+    @patch("subprocess.Popen")
+    @patch("selectors.DefaultSelector")
     def test_start_timeout(self, mock_selector_class, mock_popen, tmp_path):
         """Test start timeout when ready signal not received."""
         mock_proc = Mock()
@@ -173,14 +168,14 @@ class TestWorkerProcessStart:
         mock_selector_class.return_value = mock_selector
 
         worker = WorkerProcess()
-        with patch.object(worker, '_create_worker_file'):
+        with patch.object(worker, "_create_worker_file"):
             worker.worker_file = tmp_path / "worker.py"
             with pytest.raises(WorkerError) as exc_info:
                 worker.start()
         assert "within" in str(exc_info.value).lower()
 
-    @patch('subprocess.Popen')
-    @patch('selectors.DefaultSelector')
+    @patch("subprocess.Popen")
+    @patch("selectors.DefaultSelector")
     def test_wait_for_ready_read_error(self, mock_selector_class, mock_popen, tmp_path):
         """Test handling of read error in _wait_for_ready."""
         mock_proc = Mock()
@@ -193,9 +188,11 @@ class TestWorkerProcessStart:
         mock_selector_class.return_value = mock_selector
 
         worker = WorkerProcess()
-        with patch.object(worker, '_create_worker_file'):
+        with patch.object(worker, "_create_worker_file"):
             worker.worker_file = tmp_path / "worker.py"
-            with pytest.raises(WorkerError) as exc_info: # _wait_for_ready returns False, start() raises WorkerError wrapping WorkerTimeoutError
+            with (
+                pytest.raises(WorkerError) as exc_info
+            ):  # _wait_for_ready returns False, start() raises WorkerError wrapping WorkerTimeoutError
                 worker.start()
         assert "within" in str(exc_info.value).lower()
         mock_popen.assert_called_once()
@@ -204,16 +201,16 @@ class TestWorkerProcessStart:
         """Cover process.poll() is not None in _wait_for_ready."""
         worker = WorkerProcess()
         mock_proc = Mock()
-        mock_proc.poll.side_effect = [None, 0] # First alive, then dead
+        mock_proc.poll.side_effect = [None, 0]  # First alive, then dead
         worker.process = mock_proc
 
-        with patch('llm_manager.workers.selectors.DefaultSelector') as mock_sel:
+        with patch("llm_manager.workers.selectors.DefaultSelector") as mock_sel:
             mock_selector = Mock()
-            mock_selector.select.return_value = [] # Timeout in select
+            mock_selector.select.return_value = []  # Timeout in select
             mock_sel.return_value = mock_selector
 
             # Mock time to not timeout too fast or wait too long
-            with patch('time.time', side_effect=[0, 0.05, 0.1, 0.15]):
+            with patch("time.time", side_effect=[0, 0.05, 0.1, 0.15]):
                 result = worker._wait_for_ready()
 
         assert result is False
@@ -227,7 +224,7 @@ class TestWorkerProcessSendCommand:
         mock_proc = Mock()
         mock_proc.poll.return_value = None
 
-        with patch.object(worker, '_send_command_once') as mock_send:
+        with patch.object(worker, "_send_command_once") as mock_send:
             mock_send.return_value = {"success": True, "data": "result"}
             result = worker.send_command({"operation": "test"})
 
@@ -236,7 +233,7 @@ class TestWorkerProcessSendCommand:
     def test_send_command_retry_on_error(self):
         worker = WorkerProcess()
 
-        with patch.object(worker, '_send_command_once') as mock_send:
+        with patch.object(worker, "_send_command_once") as mock_send:
             mock_send.side_effect = [WorkerError("Error"), {"success": True}]
             result = worker.send_command({"operation": "test"})
 
@@ -245,7 +242,7 @@ class TestWorkerProcessSendCommand:
 
     def test_send_command_max_retries_exceeded(self):
         worker = WorkerProcess()
-        with patch.object(worker, '_send_command_once') as mock_send:
+        with patch.object(worker, "_send_command_once") as mock_send:
             mock_send.side_effect = WorkerError("Persistent Error")
             with pytest.raises(WorkerError) as exc_info:
                 worker.send_command({"operation": "test"}, max_retries=1)
@@ -254,7 +251,7 @@ class TestWorkerProcessSendCommand:
 
     def test_send_command_no_retry_on_timeout(self):
         worker = WorkerProcess()
-        with patch.object(worker, '_send_command_once') as mock_send:
+        with patch.object(worker, "_send_command_once") as mock_send:
             mock_send.side_effect = WorkerTimeoutError("Timeout")
             with pytest.raises(WorkerTimeoutError):
                 worker.send_command({"operation": "test"})
@@ -263,6 +260,7 @@ class TestWorkerProcessSendCommand:
     def test_send_command_once_reuse_limit(self):
         """Test restart when reuse limit reached."""
         from llm_manager.workers import WORKER_REUSE_LIMIT
+
         worker = WorkerProcess()
         worker._request_count = WORKER_REUSE_LIMIT
 
@@ -270,9 +268,11 @@ class TestWorkerProcessSendCommand:
         mock_proc.poll.return_value = None
         worker.process = mock_proc
 
-        with patch.object(worker, '_kill_process') as mock_kill, \
-             patch.object(worker, 'start'), \
-             patch.object(worker, '_read_response', return_value={"success": True}):
+        with (
+            patch.object(worker, "_kill_process") as mock_kill,
+            patch.object(worker, "start"),
+            patch.object(worker, "_read_response", return_value={"success": True}),
+        ):
             worker._send_command_once({"op": "test"}, timeout=1.0)
 
         mock_kill.assert_called_once()
@@ -286,12 +286,12 @@ class TestWorkerProcessSendCommand:
         # First returns wrong ID, then correct ID
         mock_proc.stdout.readline.side_effect = [
             b'{"id": "wrong_id"}\n',
-            b'{"id": "correct_id", "success": true}\n'
+            b'{"id": "correct_id", "success": true}\n',
         ]
         mock_proc.stdout.fileno = Mock(return_value=1)
         worker.process = mock_proc
 
-        with patch('selectors.DefaultSelector') as mock_sel:
+        with patch("selectors.DefaultSelector") as mock_sel:
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
@@ -306,13 +306,13 @@ class TestWorkerProcessSendCommand:
         mock_proc = Mock()
         mock_proc.poll.return_value = None
         mock_proc.stdout.readline.side_effect = [
-            b'invalid json\n',
-            b'{"id": "req_id", "success": true}\n'
+            b"invalid json\n",
+            b'{"id": "req_id", "success": true}\n',
         ]
         mock_proc.stdout.fileno = Mock(return_value=1)
         worker.process = mock_proc
 
-        with patch('selectors.DefaultSelector') as mock_sel:
+        with patch("selectors.DefaultSelector") as mock_sel:
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
@@ -325,11 +325,11 @@ class TestWorkerProcessSendCommand:
         """Test handling when process dies during read."""
         worker = WorkerProcess()
         mock_proc = Mock()
-        mock_proc.poll.return_value = 0 # Died
+        mock_proc.poll.return_value = 0  # Died
         mock_proc.stdout.fileno = Mock(return_value=1)
         worker.process = mock_proc
 
-        with patch('selectors.DefaultSelector') as mock_sel:
+        with patch("selectors.DefaultSelector") as mock_sel:
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
@@ -348,31 +348,26 @@ class TestWorkerProcessSendCommand:
         worker.process = mock_proc
 
         # We need it to eventually timeout so it doesn't loop forever
-        with patch('selectors.DefaultSelector') as mock_sel:
+        with patch("selectors.DefaultSelector") as mock_sel:
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
 
-            with patch('time.time', side_effect=[0, 0, 0.5, 0.5, 2.0, 2.0]):
+            with patch("time.time", side_effect=[0, 0, 0.5, 0.5, 2.0, 2.0]):
                 with pytest.raises(WorkerTimeoutError):
                     worker._read_response("req_id", timeout=1.0)
 
-    def test_send_command_no_retry_on_timeout(self):
-        worker = WorkerProcess()
-
-        with patch.object(worker, '_send_command_once') as mock_send:
-            mock_send.side_effect = WorkerTimeoutError("Timeout")
-            with pytest.raises(WorkerTimeoutError):
-                worker.send_command({"operation": "test"})
 
     def test_sync_worker_send_command_once_start_if_not_running(self):
         """Cover self.start() in _send_command_once if not running."""
         worker = WorkerProcess()
         worker.process = Mock()
-        worker.process.poll.return_value = 0 # Not running
+        worker.process.poll.return_value = 0  # Not running
 
-        with patch.object(worker, 'start') as mock_start, \
-             patch.object(worker, '_read_response', return_value={"success": True}):
+        with (
+            patch.object(worker, "start") as mock_start,
+            patch.object(worker, "_read_response", return_value={"success": True}),
+        ):
             # Mock stdin
             worker.process.stdin = Mock()
 
@@ -410,8 +405,8 @@ class TestWorkerProcessStats:
 class TestWorkerProcessContextManager:
     """Tests for context manager protocol."""
 
-    @patch.object(WorkerProcess, 'start')
-    @patch.object(WorkerProcess, 'stop')
+    @patch.object(WorkerProcess, "start")
+    @patch.object(WorkerProcess, "stop")
     def test_context_manager(self, mock_stop, mock_start):
         with WorkerProcess() as worker:
             pass
@@ -430,7 +425,7 @@ class TestAsyncWorkerProcess:
         assert worker._started is False
 
     @pytest.mark.asyncio
-    @patch('asyncio.create_subprocess_exec')
+    @patch("asyncio.create_subprocess_exec")
     async def test_async_start(self, mock_create_subproc):
         mock_proc = Mock()
         mock_proc.returncode = None
@@ -440,7 +435,7 @@ class TestAsyncWorkerProcess:
         mock_create_subproc.return_value = mock_proc
 
         worker = AsyncWorkerProcess()
-        with patch.object(worker, '_create_worker_file'):
+        with patch.object(worker, "_create_worker_file"):
             worker.worker_file = Path("/tmp/worker.py")
             await worker.start()
 
@@ -453,12 +448,15 @@ class TestAsyncWorkerProcess:
 
         # Calculate what the req_id will be
         import os
+
         expected_id = f"async_{os.getpid()}_{id(worker)}_0"
 
         mock_proc = Mock()
         mock_proc.returncode = None
         mock_proc.stdin.drain = AsyncMock()
-        mock_proc.stdout.readline = AsyncMock(return_value=f'{{"id": "{expected_id}", "success": true}}'.encode())
+        mock_proc.stdout.readline = AsyncMock(
+            return_value=f'{{"id": "{expected_id}", "success": true}}'.encode()
+        )
         worker.process = mock_proc
 
         result = await worker.send_command({"operation": "test"})
@@ -494,13 +492,15 @@ class TestAsyncWorkerProcess:
     async def test_async_worker_start_ready_false(self):
         """Cover ready is False in AsyncWorkerProcess.start."""
         worker = AsyncWorkerProcess()
-        with patch('llm_manager.workers.asyncio.create_subprocess_exec', new_callable=AsyncMock) as mock_exec:
+        with patch(
+            "llm_manager.workers.asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
             mock_proc = AsyncMock()
             mock_exec.return_value = mock_proc
 
             # Mock _wait_for_ready to return False
-            with patch.object(worker, '_wait_for_ready', return_value=False):
-                with patch.object(worker, 'stop', new_callable=AsyncMock) as mock_stop:
+            with patch.object(worker, "_wait_for_ready", return_value=False):
+                with patch.object(worker, "stop", new_callable=AsyncMock) as mock_stop:
                     with pytest.raises(WorkerError) as exc_info:
                         await worker.start()
                     assert "failed to start" in str(exc_info.value).lower()
@@ -510,8 +510,11 @@ class TestAsyncWorkerProcess:
     async def test_async_worker_start_exception(self):
         """Cover exception in AsyncWorkerProcess.start."""
         worker = AsyncWorkerProcess()
-        with patch('llm_manager.workers.asyncio.create_subprocess_exec', side_effect=Exception("Exec failed")):
-            with patch.object(worker, 'stop', new_callable=AsyncMock) as mock_stop:
+        with patch(
+            "llm_manager.workers.asyncio.create_subprocess_exec",
+            side_effect=Exception("Exec failed"),
+        ):
+            with patch.object(worker, "stop", new_callable=AsyncMock) as mock_stop:
                 with pytest.raises(WorkerError) as exc_info:
                     await worker.start()
                 assert "failed to start" in str(exc_info.value).lower()
@@ -527,6 +530,7 @@ class TestAsyncWorkerProcessStreamGenerate:
         worker = AsyncWorkerProcess()
 
         import os
+
         expected_id = f"async_stream_{os.getpid()}_{id(worker)}_0"
 
         mock_proc = Mock()
@@ -556,6 +560,7 @@ class TestAsyncWorkerProcessStreamGenerate:
         worker = AsyncWorkerProcess()
 
         import os
+
         expected_id = f"async_stream_{os.getpid()}_{id(worker)}_0"
 
         mock_proc = Mock()
@@ -576,7 +581,6 @@ class TestAsyncWorkerProcessStreamGenerate:
 
         assert "Read error" in str(exc_info.value)
 
-
     @pytest.mark.asyncio
     async def test_async_worker_auto_start_streaming(self):
         """Cover async worker auto-start in streaming."""
@@ -591,13 +595,15 @@ class TestAsyncWorkerProcessStreamGenerate:
             worker.process = mock_proc
 
         worker.start = AsyncMock(side_effect=mock_start)
-        worker.process = None # Not started
+        worker.process = None  # Not started
 
         gen = worker.send_streaming_command_gen({})
 
-        async for _ in gen: pass
+        async for _ in gen:
+            pass
 
         worker.start.assert_awaited()
+
 
 class TestWorkerFileCreation:
     """Tests for worker file creation."""
@@ -605,17 +611,17 @@ class TestWorkerFileCreation:
     def test_creates_file_with_script(self, tmp_path):
         worker = WorkerProcess(idle_timeout=1800)
 
-        with patch('tempfile.gettempdir', return_value=str(tmp_path)):
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
             worker._create_worker_file()
 
         assert worker.worker_file.exists()
         content = worker.worker_file.read_text()
-        assert '1800' in content
+        assert "1800" in content
 
     def test_file_permissions(self, tmp_path):
         worker = WorkerProcess()
 
-        with patch('tempfile.gettempdir', return_value=str(tmp_path)):
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
             worker._create_worker_file()
 
         mode = worker.worker_file.stat().st_mode
@@ -664,7 +670,7 @@ class TestWorkerProcessStop:
 
         # Should write exit command to stdin
         mock_proc.stdin.write.assert_called_once()
-        assert 'exit' in mock_proc.stdin.write.call_args[0][0]
+        assert "exit" in mock_proc.stdin.write.call_args[0][0]
         assert worker.process is None
 
     def test_stop_error_handling(self):
@@ -701,7 +707,7 @@ class TestAsyncWorkerProcessSendCommand:
         worker.process = None
 
         # The implementation tries to auto-start, so we should get a start failure
-        with patch.object(worker, 'start', new_callable=AsyncMock) as mock_start:
+        with patch.object(worker, "start", new_callable=AsyncMock) as mock_start:
             mock_start.side_effect = WorkerError("Failed to start")
 
             with pytest.raises(WorkerError) as exc_info:
@@ -715,6 +721,7 @@ class TestAsyncWorkerProcessSendCommand:
         worker = AsyncWorkerProcess()
 
         import os
+
         expected_id = f"async_{os.getpid()}_{id(worker)}_0"
 
         mock_proc = Mock()
@@ -737,8 +744,8 @@ class TestAsyncWorkerContextManager:
     """Tests for AsyncWorkerProcess async context manager."""
 
     @pytest.mark.asyncio
-    @patch.object(AsyncWorkerProcess, 'start')
-    @patch.object(AsyncWorkerProcess, 'stop')
+    @patch.object(AsyncWorkerProcess, "start")
+    @patch.object(AsyncWorkerProcess, "stop")
     async def test_async_context_manager(self, mock_stop, mock_start):
         """Test async context manager."""
         async with AsyncWorkerProcess() as worker:
@@ -758,7 +765,7 @@ class TestEmergencyCleanupErrorHandling:
         mock_proc.kill.side_effect = Exception("Kill failed")
         mock_proc.wait.return_value = None
 
-        with patch('llm_manager.workers._WORKER_PROCESSES', [mock_proc]):
+        with patch("llm_manager.workers._WORKER_PROCESSES", [mock_proc]):
             _emergency_cleanup()  # Should not raise
 
     def test_emergency_cleanup_wait_error(self):
@@ -767,7 +774,7 @@ class TestEmergencyCleanupErrorHandling:
         mock_proc.poll.return_value = None
         mock_proc.wait.side_effect = Exception("Wait failed")
 
-        with patch('llm_manager.workers._WORKER_PROCESSES', [mock_proc]):
+        with patch("llm_manager.workers._WORKER_PROCESSES", [mock_proc]):
             _emergency_cleanup()  # Should not raise
 
 
@@ -815,8 +822,8 @@ class TestAsyncWorkerProcessRestart:
     """Tests for AsyncWorkerProcess restart."""
 
     @pytest.mark.asyncio
-    @patch.object(AsyncWorkerProcess, 'stop')
-    @patch.object(AsyncWorkerProcess, 'start')
+    @patch.object(AsyncWorkerProcess, "stop")
+    @patch.object(AsyncWorkerProcess, "start")
     async def test_async_restart_success(self, mock_start, mock_stop):
         """Test successful async restart via internal method."""
         worker = AsyncWorkerProcess()
@@ -835,11 +842,11 @@ class TestAsyncWorkerProcessSpecialCases:
         """Test async wait_for_ready failure scenario."""
         worker = AsyncWorkerProcess()
         mock_proc = Mock()
-        mock_proc.stdout.readline = AsyncMock(return_value=b'invalid\n')
+        mock_proc.stdout.readline = AsyncMock(return_value=b"invalid\n")
         worker.process = mock_proc
 
         # Should return False on timeout
-        with patch('asyncio.wait_for', side_effect=asyncio.TimeoutError()):
+        with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError()):
             result = await worker._wait_for_ready(timeout=0.01)
         assert result is False
 
@@ -849,7 +856,7 @@ class TestAsyncWorkerProcessSpecialCases:
         worker = AsyncWorkerProcess()
         mock_proc = Mock()
         mock_proc.returncode = None
-        mock_proc.stdout.readline = AsyncMock(return_value=b'') # EOF
+        mock_proc.stdout.readline = AsyncMock(return_value=b"")  # EOF
         mock_proc.stdin.drain = AsyncMock()
         mock_proc.wait = AsyncMock()
         worker.process = mock_proc
@@ -865,7 +872,7 @@ class TestAsyncWorkerProcessSpecialCases:
         worker = AsyncWorkerProcess()
         mock_proc = Mock()
         mock_proc.returncode = None
-        mock_proc.stdout.readline = AsyncMock(return_value=b'') # EOF
+        mock_proc.stdout.readline = AsyncMock(return_value=b"")  # EOF
         mock_proc.stdin.drain = AsyncMock()
         mock_proc.wait = AsyncMock()
         worker.process = mock_proc
@@ -896,17 +903,20 @@ class TestWorkerProcessStreaming:
         mock_proc.stdout.fileno = Mock(return_value=1)
 
         # Consistent request ID
-        import os, threading
+        import os
+
         req_id = f"{os.getpid()}_{threading.get_ident()}_1"
 
         mock_proc.stdout.readline.side_effect = [
             f'{{"id": "{req_id}", "type": "chunk", "chunk": "hello"}}\n'.encode(),
             f'{{"id": "{req_id}", "type": "done"}}\n'.encode(),
-            b'' # EOF
+            b"",  # EOF
         ]
 
-        with patch.object(worker, 'start') as mock_start, \
-             patch('selectors.DefaultSelector') as mock_sel:
+        with (
+            patch.object(worker, "start") as mock_start,
+            patch("selectors.DefaultSelector") as mock_sel,
+        ):
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
@@ -923,23 +933,22 @@ class TestWorkerProcessStreaming:
         worker = WorkerProcess()
         mock_proc = Mock()
         mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.side_effect = [
-            b'invalid\n',
-            b'{"id": "req_0", "type": "done"}\n'
-        ]
+        mock_proc.stdout.readline.side_effect = [b"invalid\n", b'{"id": "req_0", "type": "done"}\n']
         worker.process = mock_proc
 
-        with patch('selectors.DefaultSelector') as mock_sel:
+        with patch("selectors.DefaultSelector") as mock_sel:
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
 
             # Use os.getpid and threading.get_ident and id(worker) to match req_id
-            import os, threading
+            import os
+            import threading
+
             req_id = f"{os.getpid()}_{threading.get_ident()}_0"
             mock_proc.stdout.readline.side_effect = [
-                b'invalid\n',
-                f'{{"id": "{req_id}", "type": "done"}}\n'.encode()
+                b"invalid\n",
+                f'{{"id": "{req_id}", "type": "done"}}\n'.encode(),
             ]
 
             list(worker.send_streaming_command({"prompt": "test"}))
@@ -963,19 +972,25 @@ class TestWorkerProcessStreaming:
         """Cover self.start() in send_streaming_command if not running."""
         worker = WorkerProcess()
         worker.process = Mock()
-        worker.process.poll.return_value = 0 # Not running
+        worker.process.poll.return_value = 0  # Not running
 
-        import os, threading, selectors
+        import os
+        import selectors
+
         req_id = f"{os.getpid()}_{threading.get_ident()}_0"
 
-        with patch.object(worker, 'start') as mock_start, \
-             patch('llm_manager.workers.selectors.DefaultSelector') as mock_sel:
+        with (
+            patch.object(worker, "start") as mock_start,
+            patch("llm_manager.workers.selectors.DefaultSelector") as mock_sel,
+        ):
             mock_selector = Mock()
             mock_selector.select.return_value = [(Mock(), selectors.EVENT_READ)]
             mock_sel.return_value = mock_selector
 
             worker.process.stdout.fileno = Mock(return_value=1)
-            worker.process.stdout.readline.return_value = f'{{"id": "{req_id}", "type": "done"}}\n'.encode()
+            worker.process.stdout.readline.return_value = (
+                f'{{"id": "{req_id}", "type": "done"}}\n'.encode()
+            )
             worker.process.stdin = Mock()
 
             list(worker.send_streaming_command({"op": "test"}))
@@ -995,7 +1010,7 @@ class TestWorkerProcessStreaming:
         gen = worker.send_streaming_command(command, timeout=1.0)
 
         with pytest.raises(Exception):
-             next(gen)
+            next(gen)
 
 
 class TestWorkerFailures:
@@ -1006,19 +1021,21 @@ class TestWorkerFailures:
         worker = WorkerProcess()
         worker.process = Mock()
         worker.process.poll.return_value = None
-        worker._request_count = 1000 # Trigger reuse limit (assuming 100)
+        worker._request_count = 1000  # Trigger reuse limit (assuming 100)
 
         # We need to mock WORKER_REUSE_LIMIT to be lower or set count high
-        with patch('llm_manager.workers.WORKER_REUSE_LIMIT', 10):
-            with patch.object(worker, '_kill_process', side_effect=Exception("Kill failed")) as mock_kill:
-                 # Call _send_command_once directly to verify reuse logic
-                 # It should catch kill exception and continue
-                with patch('llm_manager.workers.time.sleep'): # skip sleep
+        with patch("llm_manager.workers.WORKER_REUSE_LIMIT", 10):
+            with patch.object(
+                worker, "_kill_process", side_effect=Exception("Kill failed")
+            ) as mock_kill:
+                # Call _send_command_once directly to verify reuse logic
+                # It should catch kill exception and continue
+                with patch("llm_manager.workers.time.sleep"):  # skip sleep
                     try:
                         worker._send_command_once({"op": "test"}, timeout=1)
                     except Exception:
-                         # It might fail later in write if we don't mock stdin
-                         pass
+                        # It might fail later in write if we don't mock stdin
+                        pass
 
                 mock_kill.assert_called()
                 # count should NOT be reset if kill failed
@@ -1032,7 +1049,7 @@ class TestWorkerFailures:
         worker.process.stdin.write.side_effect = Exception("Write failed")
 
         # Should catch exception, log error, kill process, and raise WorkerError
-        with patch.object(worker, '_kill_process') as mock_kill:
+        with patch.object(worker, "_kill_process") as mock_kill:
             with pytest.raises(WorkerError) as exc_info:
                 worker._send_command_once({"op": "test"}, timeout=1)
 
@@ -1045,9 +1062,9 @@ class TestWorkerFailures:
         worker.worker_file = tmp_path / "worker.py"
         worker.worker_file.touch()
 
-        with patch('pathlib.Path.exists', return_value=True):
+        with patch("pathlib.Path.exists", return_value=True):
             # Should return immediately coverage line 591
-            with patch('tempfile.gettempdir') as mock_tmp:
+            with patch("tempfile.gettempdir") as mock_tmp:
                 worker._create_worker_file()
                 mock_tmp.assert_not_called()
 
@@ -1056,20 +1073,20 @@ class TestWorkerFailures:
         # 1. Start failure (line 431)
         # We need to make popen raise generic Exception
         wp = WorkerProcess(idle_timeout=10)
-        with patch('subprocess.Popen', side_effect=Exception("Popen fail")):
-             with pytest.raises(WorkerError, match="Failed to start worker: Popen fail"):
-                 wp.start()
+        with patch("subprocess.Popen", side_effect=Exception("Popen fail")):
+            with pytest.raises(WorkerError, match="Failed to start worker: Popen fail"):
+                wp.start()
 
         # 2. send_command generic exception (line 564)
         # Patch init to prevent real subprocess start on retry
-        with patch('subprocess.Popen') as mock_popen:
+        with patch("subprocess.Popen") as mock_popen:
             # Setup mock process that always fails write
             mock_proc = MagicMock()
             mock_proc.poll.return_value = None
             mock_proc.stdin.write.side_effect = Exception("Write fail")
             mock_popen.return_value = mock_proc
 
-            wp.process = mock_proc # Initial process
+            wp.process = mock_proc  # Initial process
 
             # Mock _wait_for_ready to avoid selector errors on mock stdout
             wp._wait_for_ready = Mock(return_value=True)
@@ -1077,7 +1094,7 @@ class TestWorkerFailures:
             # This should hit the generic Exception catch in send_command
             # Note: retry logic will try to restart (calling mocked Popen), which also fails write
             with pytest.raises(WorkerError, match="Worker communication failed: Write fail"):
-                 wp.send_command({})
+                wp.send_command({})
 
             # 3. send_streaming_command exception (lines 666-669)
             # Reuse failing writer
@@ -1085,16 +1102,16 @@ class TestWorkerFailures:
             # We need mock_popen active to fail the write in new process (or reused mock)
             # Match "Streaming failed" because send_streaming_command wraps the error
             with pytest.raises(WorkerError, match="Streaming failed: Write fail"):
-                 list(wp.send_streaming_command({}))
+                list(wp.send_streaming_command({}))
 
 
 class TestWorkerDefensivePaths:
     """Tests for defensive error handling paths."""
-    
+
     def test_kill_process_oskill_error(self):
         """Cover OSError in _kill_process when os.kill fails (lines 631-632, 639-640)."""
         from unittest.mock import patch
-        
+
         worker = WorkerProcess()
         mock_proc = Mock()
         mock_proc.poll.return_value = None  # Process is running
@@ -1102,40 +1119,42 @@ class TestWorkerDefensivePaths:
         mock_proc.stdout = Mock()
         mock_proc.stderr = Mock()
         worker.process = mock_proc
-        
+
         # Make os.kill raise OSError (simulating permission denied)
-        with patch('os.kill', side_effect=OSError("No such process")):
+        with patch("os.kill", side_effect=OSError("No such process")):
             # Should not raise - should handle gracefully
             worker._kill_process()
-    
+
     def test_send_command_all_retries_fail(self):
         """Cover line 431: raise last_error or WorkerError when all retries fail."""
-        from llm_manager.exceptions import WorkerError, WorkerTimeoutError
-        
+        from llm_manager.exceptions import WorkerError
+
         worker = WorkerProcess()
-        
+
         # Mock to simulate continuous failures
         worker.start = Mock()
         worker.is_alive = Mock(return_value=True)
-        
+
         # _send_command_once will fail
-        with patch.object(worker, '_send_command_once', side_effect=WorkerError("Connection failed")):
+        with patch.object(
+            worker, "_send_command_once", side_effect=WorkerError("Connection failed")
+        ):
             with pytest.raises(WorkerError) as exc_info:
                 worker.send_command({"operation": "test"}, max_retries=2)
-            
+
             # Should re-raise the last error (from the final retry)
             assert "Connection failed" in str(exc_info.value)
-    
+
     def test_send_command_timeout_not_retried(self):
         """Cover line 419-420: Timeout errors are not retried."""
         from llm_manager.exceptions import WorkerTimeoutError
-        
+
         worker = WorkerProcess()
         worker.start = Mock()
         worker.is_alive = Mock(return_value=True)
-        
+
         # Timeout should be raised immediately without retry
-        with patch.object(worker, '_send_command_once', side_effect=WorkerTimeoutError("Timeout")):
+        with patch.object(worker, "_send_command_once", side_effect=WorkerTimeoutError("Timeout")):
             with pytest.raises(WorkerTimeoutError):
                 worker.send_command({"operation": "test"})
 
@@ -1145,28 +1164,30 @@ class TestWorkerPermissionErrors:
 
     def test_create_worker_file_permission_error(self, tmp_path):
         """Cover PermissionError handling (line 610-611)."""
-        from llm_manager.exceptions import WorkerError
         from unittest.mock import patch
-        
+
+        from llm_manager.exceptions import WorkerError
+
         worker = WorkerProcess()
-        
-        with patch('tempfile.gettempdir', return_value=str(tmp_path)):
-            with patch('pathlib.Path.write_text', side_effect=PermissionError("No permission")):
+
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
+            with patch("pathlib.Path.write_text", side_effect=PermissionError("No permission")):
                 with pytest.raises(WorkerError) as exc_info:
                     worker._create_worker_file()
-                
+
                 assert "Failed to create worker file" in str(exc_info.value)
 
     def test_create_worker_file_os_error(self, tmp_path):
         """Cover OSError handling (line 610-611)."""
-        from llm_manager.exceptions import WorkerError
         from unittest.mock import patch
-        
+
+        from llm_manager.exceptions import WorkerError
+
         worker = WorkerProcess()
-        
-        with patch('tempfile.gettempdir', return_value=str(tmp_path)):
-            with patch('pathlib.Path.chmod', side_effect=OSError("OS error")):
+
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
+            with patch("pathlib.Path.chmod", side_effect=OSError("OS error")):
                 with pytest.raises(WorkerError) as exc_info:
                     worker._create_worker_file()
-                
+
                 assert "Failed to create worker file" in str(exc_info.value)

@@ -3,26 +3,24 @@ Tests for llm_manager/utils.py - Utility functions.
 """
 
 import logging
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch, mock_open
+from unittest.mock import patch
 
 import pytest
 
+from llm_manager.exceptions import ValidationError
 from llm_manager.utils import (
-    is_code,
-    is_cjk,
+    LRUCache,
+    Timer,
+    check_disk_space,
+    compute_file_hash,
     is_base64_content,
-    validate_temperature,
+    is_cjk,
+    is_code,
     validate_max_tokens,
     validate_messages,
     validate_model_path,
-    check_disk_space,
-    compute_file_hash,
-    LRUCache,
-    Timer,
+    validate_temperature,
 )
-from llm_manager.exceptions import ValidationError, ResourceError
 
 
 class TestContentDetection:
@@ -97,7 +95,7 @@ class TestContentDetection:
 
     def test_is_base64_with_spaces(self):
         text = "A" * 6000
-        text_with_spaces = " ".join([text[i:i+10] for i in range(0, len(text), 10)])
+        text_with_spaces = " ".join([text[i : i + 10] for i in range(0, len(text), 10)])
         assert is_base64_content(text_with_spaces) is False
 
     def test_is_base64_with_indicator(self):
@@ -142,10 +140,7 @@ class TestValidation:
         assert "large max_tokens" in caplog.text.lower()
 
     def test_validate_messages_valid(self):
-        messages = [
-            {"role": "user", "content": "Hello"},
-            {"role": "assistant", "content": "Hi"}
-        ]
+        messages = [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi"}]
         result = validate_messages(messages)
         assert result == messages
 
@@ -214,7 +209,7 @@ class TestModelPathValidation:
         test_file = tmp_path / "model.gguf"
         test_file.write_bytes(b"GGUF")
 
-        with patch('builtins.open', side_effect=OSError("Denied")):
+        with patch("builtins.open", side_effect=OSError("Denied")):
             with pytest.raises(ValidationError) as exc_info:
                 validate_model_path(test_file)
             assert "cannot read" in str(exc_info.value).lower()
@@ -276,49 +271,49 @@ class TestLRUCache:
 
     def test_basic_operations(self):
         cache = LRUCache(maxsize=2)
-        cache['a'] = 1
-        cache['b'] = 2
+        cache["a"] = 1
+        cache["b"] = 2
 
-        assert cache['a'] == 1
-        assert cache['b'] == 2
+        assert cache["a"] == 1
+        assert cache["b"] == 2
         assert len(cache) == 2
 
     def test_eviction(self):
         cache = LRUCache(maxsize=2)
-        cache['a'] = 1
-        cache['b'] = 2
-        cache['c'] = 3
+        cache["a"] = 1
+        cache["b"] = 2
+        cache["c"] = 3
 
-        assert 'a' not in cache
-        assert 'b' in cache
-        assert 'c' in cache
+        assert "a" not in cache
+        assert "b" in cache
+        assert "c" in cache
 
     def test_lru_order(self):
         cache = LRUCache(maxsize=2)
-        cache['a'] = 1
-        cache['b'] = 2
+        cache["a"] = 1
+        cache["b"] = 2
 
-        _ = cache['a']
+        _ = cache["a"]
 
-        cache['c'] = 3
+        cache["c"] = 3
 
-        assert 'a' in cache
-        assert 'b' not in cache
-        assert 'c' in cache
+        assert "a" in cache
+        assert "b" not in cache
+        assert "c" in cache
 
     def test_update_existing(self):
         cache = LRUCache(maxsize=2)
-        cache['a'] = 1
-        cache['a'] = 2
+        cache["a"] = 1
+        cache["a"] = 2
 
-        assert cache['a'] == 2
+        assert cache["a"] == 2
         assert len(cache) == 1
 
     def test_contains(self):
         cache = LRUCache(maxsize=2)
-        cache['a'] = 1
-        assert 'a' in cache
-        assert 'b' not in cache
+        cache["a"] = 1
+        assert "a" in cache
+        assert "b" not in cache
 
 
 class TestTimer:

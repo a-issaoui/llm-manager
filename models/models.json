@@ -38,19 +38,23 @@
       "audio": null,
       "custom_chat_template": false,
       "context_test": {
-        "max_context": 32768,
-        "recommended_context": 26214,
-        "buffer_tokens": 6554,
-        "buffer_percent": 20,
-        "tested": false,
-        "verified_stable": false,
+        "max_context": 10240,
+        "recommended_context": 9728,
+        "buffer_tokens": 512,
+        "buffer_percent": 5,
+        "tested": true,
+        "verified_stable": true,
         "error": null,
-        "test_config": {},
-        "timestamp": "",
-        "confidence": 1.0
+        "test_config": {
+          "kv_quant": "q4_0",
+          "flash_attn": true,
+          "gpu_layers": -1
+        },
+        "timestamp": "2026-02-07T02:04:11.879145",
+        "confidence": 0.8
       },
-      "optimized_kv_quant": false,
-      "file_hash": "5e4d65e2443771b2"
+      "optimized_kv_quant": true,
+      "file_hash": "598afdb0d083c97c"
     },
     "capabilities": {
       "chat": true,
@@ -105,19 +109,23 @@
       "audio": null,
       "custom_chat_template": false,
       "context_test": {
-        "max_context": 32768,
-        "recommended_context": 26214,
-        "buffer_tokens": 6554,
-        "buffer_percent": 20,
-        "tested": false,
-        "verified_stable": false,
+        "max_context": 17408,
+        "recommended_context": 16537,
+        "buffer_tokens": 871,
+        "buffer_percent": 5,
+        "tested": true,
+        "verified_stable": true,
         "error": null,
-        "test_config": {},
-        "timestamp": "",
+        "test_config": {
+          "kv_quant": "q4_0",
+          "flash_attn": true,
+          "gpu_layers": -1
+        },
+        "timestamp": "2026-02-07T02:07:43.306023",
         "confidence": 1.0
       },
-      "optimized_kv_quant": false,
-      "file_hash": "e5451406dc0ba0b9"
+      "optimized_kv_quant": true,
+      "file_hash": "5bf5a8dd97d9bfa0"
     },
     "capabilities": {
       "chat": true,
@@ -172,19 +180,23 @@
       "audio": null,
       "custom_chat_template": false,
       "context_test": {
-        "max_context": 16384,
-        "recommended_context": 13107,
-        "buffer_tokens": 3277,
-        "buffer_percent": 20,
-        "tested": false,
-        "verified_stable": false,
+        "max_context": 31744,
+        "recommended_context": 30156,
+        "buffer_tokens": 1588,
+        "buffer_percent": 5,
+        "tested": true,
+        "verified_stable": true,
         "error": null,
-        "test_config": {},
-        "timestamp": "",
+        "test_config": {
+          "kv_quant": "q4_0",
+          "flash_attn": true,
+          "gpu_layers": -1
+        },
+        "timestamp": "2026-02-07T02:11:39.292166",
         "confidence": 1.0
       },
-      "optimized_kv_quant": false,
-      "file_hash": "2eeca7a05a29f3ca"
+      "optimized_kv_quant": true,
+      "file_hash": "fa60e27792113b9f"
     },
     "capabilities": {
       "chat": true,
@@ -239,19 +251,23 @@
       "audio": null,
       "custom_chat_template": false,
       "context_test": {
-        "max_context": 16384,
-        "recommended_context": 13107,
-        "buffer_tokens": 3277,
-        "buffer_percent": 20,
-        "tested": false,
-        "verified_stable": false,
+        "max_context": 31744,
+        "recommended_context": 30156,
+        "buffer_tokens": 1588,
+        "buffer_percent": 5,
+        "tested": true,
+        "verified_stable": true,
         "error": null,
-        "test_config": {},
-        "timestamp": "",
+        "test_config": {
+          "kv_quant": "q4_0",
+          "flash_attn": true,
+          "gpu_layers": -1
+        },
+        "timestamp": "2026-02-07T02:15:40.525665",
         "confidence": 1.0
       },
-      "optimized_kv_quant": false,
-      "file_hash": "df48ee92eee8a8e7"
+      "optimized_kv_quant": true,
+      "file_hash": "e2ed811663572c40"
     },
     "capabilities": {
       "chat": true,
@@ -307,8 +323,8 @@
       "custom_chat_template": false,
       "context_test": {
         "max_context": 16384,
-        "recommended_context": 13107,
-        "buffer_tokens": 3277,
+        "recommended_context": 15564,
+        "buffer_tokens": 820,
         "buffer_percent": 20,
         "tested": false,
         "verified_stable": false,
@@ -373,19 +389,23 @@
       "audio": null,
       "custom_chat_template": false,
       "context_test": {
-        "max_context": 32768,
-        "recommended_context": 26214,
-        "buffer_tokens": 6554,
-        "buffer_percent": 20,
-        "tested": false,
-        "verified_stable": false,
+        "max_context": 12288,
+        "recommended_context": 11673,
+        "buffer_tokens": 615,
+        "buffer_percent": 5,
+        "tested": true,
+        "verified_stable": true,
         "error": null,
-        "test_config": {},
-        "timestamp": "",
-        "confidence": 1.0
+        "test_config": {
+          "kv_quant": "q4_0",
+          "flash_attn": true,
+          "gpu_layers": -1
+        },
+        "timestamp": "2026-02-07T02:18:37.001064",
+        "confidence": 0.8
       },
-      "optimized_kv_quant": false,
-      "file_hash": "074e33b9e23f940e"
+      "optimized_kv_quant": true,
+      "file_hash": "9b3d98c2d3616117"
     },
     "capabilities": {
       "chat": true,
@@ -440,19 +460,23 @@
       "audio": null,
       "custom_chat_template": false,
       "context_test": {
-        "max_context": 1024,
-        "recommended_context": 819,
-        "buffer_tokens": 205,
-        "buffer_percent": 20,
-        "tested": false,
-        "verified_stable": false,
+        "max_context": 8192,
+        "recommended_context": 7782,
+        "buffer_tokens": 410,
+        "buffer_percent": 5,
+        "tested": true,
+        "verified_stable": true,
         "error": null,
-        "test_config": {},
-        "timestamp": "",
+        "test_config": {
+          "kv_quant": "q4_0",
+          "flash_attn": true,
+          "gpu_layers": -1
+        },
+        "timestamp": "2026-02-07T02:18:55.944390",
         "confidence": 1.0
       },
-      "optimized_kv_quant": false,
-      "file_hash": "78d14e01e496db5a"
+      "optimized_kv_quant": true,
+      "file_hash": "6817320aba80788e"
     },
     "capabilities": {
       "chat": true,

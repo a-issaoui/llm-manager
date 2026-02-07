@@ -9,9 +9,9 @@ import re
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Any
 
-from .exceptions import ValidationError, ResourceError
+from .exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +23,11 @@ MIN_DISK_SPACE_MB = 100
 # ==============================================================================
 
 _CODE_PATTERN = re.compile(
-    r'\b(def|class|import|function|return|for|while|if|const|let|var|public|private)\b'
-    r'|[{}\[\];()]|//|/\*|=>|\+=|-=|\*=|/='
+    r"\b(def|class|import|function|return|for|while|if|const|let|var|public|private)\b"
+    r"|[{}\[\];()]|//|/\*|=>|\+=|-=|\*=|/="
 )
 
-_BASE64_PREFIX_PATTERN = re.compile(r'^data:(image|application|video)/')
+_BASE64_PREFIX_PATTERN = re.compile(r"^data:(image|application|video)/")
 
 # Constants for base64 detection heuristics
 _BASE64_MIN_LENGTH = 5000
@@ -85,10 +85,13 @@ def is_cjk(text: str) -> bool:
     sample = text[:100]
 
     for char in sample:
-        if ('\u4e00' <= char <= '\u9fff' or  # CJK Unified Ideographs
-            '\u3040' <= char <= '\u30ff' or  # Hiragana & Katakana
-            '\uac00' <= char <= '\ud7af'):   # Hangul
-            return True
+        # Check for CJK Unified Ideographs, Hiragana, Katakana, and Hangul
+        if "\u4e00" <= char <= "\u9fff":
+            return True  # CJK Unified Ideographs
+        if "\u3040" <= char <= "\u30ff":
+            return True  # Hiragana & Katakana
+        if "\uac00" <= char <= "\ud7af":
+            return True  # Hangul
 
     return False
 
@@ -134,10 +137,7 @@ def is_base64_content(text: str) -> bool:
 # ==============================================================================
 
 
-def check_disk_space(
-    path: str,
-    required_mb: int = MIN_DISK_SPACE_MB
-) -> Tuple[bool, float]:
+def check_disk_space(path: str, required_mb: int = MIN_DISK_SPACE_MB) -> tuple[bool, float]:
     """
     Check if sufficient disk space is available.
 
@@ -185,17 +185,11 @@ def validate_model_path(path: Path) -> Path:
 
     # Check existence
     if not path.exists():
-        raise ValidationError(
-            f"Model file not found: {path}",
-            {"path": str(path)}
-        )
+        raise ValidationError(f"Model file not found: {path}", {"path": str(path)})
 
     # Check it's a file
     if not path.is_file():
-        raise ValidationError(
-            f"Path is not a file: {path}",
-            {"path": str(path)}
-        )
+        raise ValidationError(f"Path is not a file: {path}", {"path": str(path)})
 
     # Check GGUF magic bytes
     try:
@@ -204,13 +198,12 @@ def validate_model_path(path: Path) -> Path:
             if magic != b"GGUF":
                 raise ValidationError(
                     f"File is not a valid GGUF model: {path}",
-                    {"path": str(path), "magic": magic.hex()}
+                    {"path": str(path), "magic": magic.hex()},
                 )
     except OSError as e:
         raise ValidationError(
-            f"Cannot read model file: {path}",
-            {"path": str(path), "error": str(e)}
-        )
+            f"Cannot read model file: {path}", {"path": str(path), "error": str(e)}
+        ) from e
 
     return path.resolve()
 
@@ -260,13 +253,13 @@ def validate_temperature(temperature: float) -> float:
     if not isinstance(temperature, (int, float)):
         raise ValidationError(
             f"Temperature must be numeric, got {type(temperature).__name__}",
-            {"temperature": temperature}
+            {"temperature": temperature},
         )
 
     if not 0.0 <= temperature <= 2.0:
         raise ValidationError(
             f"Temperature must be between 0.0 and 2.0, got {temperature}",
-            {"temperature": temperature}
+            {"temperature": temperature},
         )
 
     return float(temperature)
@@ -288,13 +281,12 @@ def validate_max_tokens(max_tokens: int) -> int:
     if not isinstance(max_tokens, int):
         raise ValidationError(
             f"max_tokens must be integer, got {type(max_tokens).__name__}",
-            {"max_tokens": max_tokens}
+            {"max_tokens": max_tokens},
         )
 
     if max_tokens < 1:
         raise ValidationError(
-            f"max_tokens must be positive, got {max_tokens}",
-            {"max_tokens": max_tokens}
+            f"max_tokens must be positive, got {max_tokens}", {"max_tokens": max_tokens}
         )
 
     if max_tokens > 100000:
@@ -303,7 +295,7 @@ def validate_max_tokens(max_tokens: int) -> int:
     return max_tokens
 
 
-def validate_messages(messages: list) -> list:
+def validate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Validate messages list structure.
 
@@ -319,7 +311,7 @@ def validate_messages(messages: list) -> list:
     if not isinstance(messages, list):
         raise ValidationError(
             f"messages must be list, got {type(messages).__name__}",
-            {"messages_type": type(messages).__name__}
+            {"messages_type": type(messages).__name__},
         )
 
     if not messages:
@@ -329,26 +321,24 @@ def validate_messages(messages: list) -> list:
         if not isinstance(msg, dict):
             raise ValidationError(
                 f"Message {i} must be dict, got {type(msg).__name__}",
-                {"index": i, "type": type(msg).__name__}
+                {"index": i, "type": type(msg).__name__},
             )
 
         if "role" not in msg:
             raise ValidationError(
-                f"Message {i} missing required 'role' field",
-                {"index": i, "message": msg}
+                f"Message {i} missing required 'role' field", {"index": i, "message": msg}
             )
 
         if "content" not in msg:
             raise ValidationError(
-                f"Message {i} missing required 'content' field",
-                {"index": i, "message": msg}
+                f"Message {i} missing required 'content' field", {"index": i, "message": msg}
             )
 
         valid_roles = {"system", "user", "assistant", "tool"}
         if msg["role"] not in valid_roles:
             raise ValidationError(
                 f"Message {i} has invalid role '{msg['role']}'",
-                {"index": i, "role": msg["role"], "valid_roles": list(valid_roles)}
+                {"index": i, "role": msg["role"], "valid_roles": list(valid_roles)},
             )
 
     return messages
@@ -373,14 +363,19 @@ class Timer:
 
     def __init__(self, name: str):
         self.name = name
-        self.start_time: Optional[float] = None
-        self.elapsed_ms: Optional[float] = None
+        self.start_time: float | None = None
+        self.elapsed_ms: float | None = None
 
     def __enter__(self) -> "Timer":
         self.start_time = time.perf_counter()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         if self.start_time is not None:
             self.elapsed_ms = (time.perf_counter() - self.start_time) * 1000
 
@@ -388,7 +383,7 @@ class Timer:
             logger.debug("[PERF] %s: %.2fms", self.name, self.elapsed_ms)
 
 
-class LRUCache(OrderedDict):
+class LRUCache(OrderedDict[Any, Any]):
     """
     O(1) LRU cache using OrderedDict.
 
@@ -407,12 +402,12 @@ class LRUCache(OrderedDict):
         super().__init__()
         self.maxsize = maxsize
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> Any:
         # Move to end (most recently used) - O(1)
         self.move_to_end(key)
         return super().__getitem__(key)
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: Any, value: Any) -> None:
         # If key exists, move to end
         if key in self:
             self.move_to_end(key)
@@ -422,6 +417,6 @@ class LRUCache(OrderedDict):
         while len(self) > self.maxsize:
             self.popitem(last=False)
 
-    def __contains__(self, key):
+    def __contains__(self, key: Any) -> bool:
         # Don't move on contains check
         return OrderedDict.__contains__(self, key)

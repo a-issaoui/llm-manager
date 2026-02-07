@@ -2,30 +2,27 @@
 Tests for llm_manager/config.py - Unified Configuration System
 """
 
-import os
 import json
-import pytest
-from pathlib import Path
+import os
 from unittest.mock import patch
 
+import pytest
+
 from llm_manager.config import (
-    # Config classes
     Config,
-    ModelConfig,
-    GenerationConfig,
-    ContextConfig,
-    WorkerConfig,
-    GPUConfig,
-    CacheConfig,
-    LoggingConfig,
-    # Functions
-    load_config,
-    get_config,
-    reload_config,
-    clear_config_cache,
-    create_default_config,
     # Exceptions
     ConfigValidationError,
+    ContextConfig,
+    GenerationConfig,
+    GPUConfig,
+    LoggingConfig,
+    ModelConfig,
+    clear_config_cache,
+    create_default_config,
+    get_config,
+    # Functions
+    load_config,
+    reload_config,
 )
 
 
@@ -114,9 +111,7 @@ class TestConfig:
         assert model_cfg["temperature"] == 0.7
 
     def test_get_model_config_with_override(self):
-        config = Config(model_overrides={
-            "special.gguf": {"temperature": 0.9}
-        })
+        config = Config(model_overrides={"special.gguf": {"temperature": 0.9}})
         model_cfg = config.get_model_config("special.gguf")
         assert model_cfg["temperature"] == 0.9
 
@@ -164,7 +159,7 @@ class TestSaveConfig:
         config = Config(models=ModelConfig(dir="/test"))
         config_file = tmp_path / "llm_manager.yaml"
         config.save(config_file)
-        
+
         assert config_file.exists()
         loaded = load_config(config_file, use_env=False)
         assert loaded.models.dir == "/test"
@@ -173,7 +168,7 @@ class TestSaveConfig:
         config = Config(models=ModelConfig(dir="/test"))
         config_file = tmp_path / "config.json"
         config.save(config_file)
-        
+
         assert config_file.exists()
         with open(config_file) as f:
             data = json.load(f)
@@ -186,7 +181,7 @@ class TestCreateDefaultConfig:
     def test_creates_yaml(self, tmp_path):
         config_file = tmp_path / "llm_manager.yaml"
         result = create_default_config(config_file)
-        
+
         assert result == config_file
         assert config_file.exists()
 

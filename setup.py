@@ -1,11 +1,11 @@
 """Setup script for llm-manager."""
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
-with open("README.md", "r", encoding="utf-8") as fh:
+with open("README.md", encoding="utf-8") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
+with open("requirements.txt", encoding="utf-8") as fh:
     requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
 
 setup(
@@ -37,8 +37,18 @@ setup(
         "uvicorn>=0.24.0",
     ],
     extras_require={
-        "agents": ["openai>=1.0.0", "pyautogen>=0.2.0", "langchain>=0.1.0", "langchain-openai>=0.0.5"],
-        "dev": ["pytest>=7.4.0", "pytest-asyncio>=0.21.0", "pytest-timeout>=2.2.0", "pytest-cov>=4.1.0"],
+        "agents": [
+            "openai>=1.0.0",
+            "pyautogen>=0.2.0",
+            "langchain>=0.1.0",
+            "langchain-openai>=0.0.5",
+        ],
+        "dev": [
+            "pytest>=7.4.0",
+            "pytest-asyncio>=0.21.0",
+            "pytest-timeout>=2.2.0",
+            "pytest-cov>=4.1.0",
+        ],
     },
     entry_points={
         "console_scripts": [

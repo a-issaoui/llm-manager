@@ -10,14 +10,14 @@ import json
 import logging
 import os
 import selectors
-import signal
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Iterator
+from typing import Any
 
 from .exceptions import WorkerError, WorkerTimeoutError
 
@@ -30,9 +30,9 @@ WORKER_IDLE_TIMEOUT_SECONDS = 3600
 WORKER_REUSE_LIMIT = 100
 
 # Global tracking for cleanup
-_WORKER_PROCESSES: List[subprocess.Popen] = []
+_WORKER_PROCESSES: list[subprocess.Popen[str]] = []
 _WORKER_PROCESSES_LOCK = threading.Lock()
-_TEMP_FILES: List[Path] = []
+_TEMP_FILES: list[Path] = []
 _TEMP_FILES_LOCK = threading.Lock()
 
 
@@ -195,14 +195,35 @@ def process_request(request: dict) -> dict:
             temperature = request.get("temperature", 0.7)
             stream = request.get("stream", False)
 
+            # Build generation kwargs with all supported parameters
+            gen_kwargs = {
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": stream,
+            }
+
+            # Add optional parameters if provided
+            if "top_p" in request:
+                gen_kwargs["top_p"] = request["top_p"]
+            if "stop" in request:
+                gen_kwargs["stop"] = request["stop"]
+            if "seed" in request:
+                gen_kwargs["seed"] = request["seed"]
+            if "presence_penalty" in request:
+                gen_kwargs["presence_penalty"] = request["presence_penalty"]
+            if "frequency_penalty" in request:
+                gen_kwargs["frequency_penalty"] = request["frequency_penalty"]
+            if "logit_bias" in request:
+                gen_kwargs["logit_bias"] = request["logit_bias"]
+            if "tools" in request:
+                gen_kwargs["tools"] = request["tools"]
+            if "tool_choice" in request:
+                gen_kwargs["tool_choice"] = request["tool_choice"]
+
             if stream:
                 # Streaming mode - yield chunks directly to stdout
-                for chunk in current_model.create_chat_completion(
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    stream=True
-                ):
+                for chunk in current_model.create_chat_completion(**gen_kwargs):
                     # Send each chunk as JSON line
                     chunk_response = make_response({
                         "type": "chunk",
@@ -213,12 +234,7 @@ def process_request(request: dict) -> dict:
                 # Signal end of stream
                 return make_response({"type": "done", "success": True})
             else:
-                response = current_model.create_chat_completion(
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    stream=False
-                )
+                response = current_model.create_chat_completion(**gen_kwargs)
                 return make_response({"success": True, "response": response})
 
         else:
@@ -310,10 +326,14 @@ class WorkerProcess:
             idle_timeout: Seconds before idle worker self-terminates
         """
         self.idle_timeout = idle_timeout
-        self.process: Optional[subprocess.Popen] = None
-        self.worker_file: Optional[Path] = None
+        self.process: subprocess.Popen[str] | None = None
+        self.worker_file: Path | None = None
         self._lock = threading.RLock()
         self._request_count = 0
+        self.tokens_generated = 0
+        self.last_active = 0.0
+        self.start_time = time.time()
+        self.current_task: dict[str, Any] | None = None
 
     def start(self) -> None:
         """
@@ -339,7 +359,7 @@ class WorkerProcess:
                     stderr=subprocess.DEVNULL,  # Prevent stderr blocking
                     text=True,
                     bufsize=1,
-                    start_new_session=True  # Detach from parent
+                    start_new_session=True,  # Detach from parent
                 )
 
                 # Register for cleanup
@@ -359,10 +379,13 @@ class WorkerProcess:
 
             except Exception as e:
                 self._kill_process()
-                raise WorkerError(f"Failed to start worker: {e}")
+                raise WorkerError(f"Failed to start worker: {e}") from e
 
     def _wait_for_ready(self) -> bool:
         """Wait for worker ready signal."""
+        if self.process is None or self.process.stdout is None:
+            return False
+
         start_time = time.time()
         sel = selectors.DefaultSelector()
         sel.register(self.process.stdout, selectors.EVENT_READ)
@@ -391,10 +414,10 @@ class WorkerProcess:
 
     def send_command(
         self,
-        command: Dict[str, Any],
+        command: dict[str, Any],
         timeout: float = CRITICAL_TIMEOUT_SECONDS,
-        max_retries: int = 2
-    ) -> Dict[str, Any]:
+        max_retries: int = 2,
+    ) -> dict[str, Any]:
         """
         Send command to worker and wait for response.
 
@@ -421,7 +444,7 @@ class WorkerProcess:
             except WorkerError as e:
                 last_error = e
                 if attempt < max_retries:
-                    logger.warning(f"Worker communication failed, retrying ({attempt + 1}/{max_retries})")
+                    logger.warning(f"Worker failed, retrying ({attempt + 1}/{max_retries})")
                     # Restart worker for next attempt
                     self._kill_process()
                     time.sleep(0.1)
@@ -430,11 +453,7 @@ class WorkerProcess:
 
         raise last_error or WorkerError("Worker communication failed")
 
-    def _send_command_once(
-        self,
-        command: Dict[str, Any],
-        timeout: float
-    ) -> Dict[str, Any]:
+    def _send_command_once(self, command: dict[str, Any], timeout: float) -> dict[str, Any]:
         """Send a single command to worker (internal)."""
         with self._lock:
             # Check reuse limit
@@ -450,6 +469,12 @@ class WorkerProcess:
             # Ensure worker is running
             if not self.process or self.process.poll() is not None:
                 self.start()
+
+            if self.process is None:
+                raise WorkerError("Worker process not available after start")
+
+            if self.process.stdin is None:
+                raise WorkerError("Worker stdin not available")
 
             # Add request ID - use fast counter instead of UUID
             req_id = f"{os.getpid()}_{threading.get_ident()}_{self._request_count}"
@@ -470,13 +495,11 @@ class WorkerProcess:
             except Exception as e:
                 logger.error(f"Worker communication error: {e}")
                 self._kill_process()
-                raise WorkerError(f"Worker communication failed: {e}")
+                raise WorkerError(f"Worker communication failed: {e}") from e
 
     def send_streaming_command(
-        self,
-        command: Dict[str, Any],
-        timeout: float = CRITICAL_TIMEOUT_SECONDS
-    ) -> Iterator[Dict[str, Any]]:
+        self, command: dict[str, Any], timeout: float = CRITICAL_TIMEOUT_SECONDS
+    ) -> Iterator[dict[str, Any]]:
         """
         Send command and yield streaming response chunks.
 
@@ -491,6 +514,9 @@ class WorkerProcess:
             # Ensure worker is running
             if not self.process or self.process.poll() is not None:
                 self.start()
+
+            if self.process is None or self.process.stdin is None or self.process.stdout is None:
+                raise WorkerError("Worker process or pipes not available")
 
             # Add request ID
             req_id = f"{os.getpid()}_{threading.get_ident()}_{self._request_count}"
@@ -538,12 +564,11 @@ class WorkerProcess:
                 self._kill_process()
                 raise WorkerError(f"Streaming failed: {e}") from e
 
-    def _read_response(
-        self,
-        req_id: str,
-        timeout: float
-    ) -> Dict[str, Any]:
+    def _read_response(self, req_id: str, timeout: float) -> dict[str, Any]:
         """Read response from worker."""
+        if self.process is None or self.process.stdout is None:
+            raise WorkerError("Worker process or stdout not available")
+
         start_time = time.time()
         sel = selectors.DefaultSelector()
         sel.register(self.process.stdout, selectors.EVENT_READ)
@@ -563,7 +588,7 @@ class WorkerProcess:
                         if not line:
                             continue
 
-                        response = json.loads(line.strip())
+                        response: dict[str, Any] = json.loads(line.strip())
 
                         # Check if this is our response
                         if response.get("id") == req_id:
@@ -578,9 +603,7 @@ class WorkerProcess:
                     except Exception as e:
                         logger.error(f"Error reading response: {e}")
 
-            raise WorkerTimeoutError(
-                f"Worker response timeout after {timeout}s"
-            )
+            raise WorkerTimeoutError(f"Worker response timeout after {timeout}s")
         finally:
             sel.unregister(self.process.stdout)
             sel.close()
@@ -597,7 +620,7 @@ class WorkerProcess:
             self.worker_file = temp_dir / f"llm_worker_{unique_id}.py"
 
             # Write script with timeout filled in
-            script = WORKER_SCRIPT.replace('__IDLE_TIMEOUT__', str(self.idle_timeout))
+            script = WORKER_SCRIPT.replace("__IDLE_TIMEOUT__", str(self.idle_timeout))
             self.worker_file.write_text(script, encoding="utf-8")
 
             # Set restrictive permissions
@@ -615,13 +638,16 @@ class WorkerProcess:
         if not self.process:
             return
 
+        stdin = self.process.stdin
+
         try:
             if self.process.poll() is None:
                 # Try graceful shutdown - write directly to stdin to avoid deadlock
                 # (we may already be holding self._lock from stop())
                 try:
-                    self.process.stdin.write('{"operation": "exit"}\n')
-                    self.process.stdin.flush()
+                    if stdin:
+                        stdin.write('{"operation": "exit"}\n')
+                        stdin.flush()
                 except Exception:
                     pass
 
@@ -672,9 +698,15 @@ class WorkerProcess:
         """Check if worker is alive."""
         return self.process is not None and self.process.poll() is None
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get worker statistics."""
         return {
+            "requests_processed": self._request_count,
+            "tokens_generated": self.tokens_generated,
+            "last_active": self.last_active,
+            "uptime": time.time() - self.start_time,
+            "status": "busy" if self.current_task else "idle",
+            # Legacy keys
             "alive": self.is_alive(),
             "request_count": self._request_count,
             "pid": self.process.pid if self.process else None,
@@ -685,14 +717,19 @@ class WorkerProcess:
         self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         """Context manager exit."""
         self.stop()
 
     def __del__(self) -> None:
         """Cleanup on deletion."""
         try:
-            if hasattr(self, 'process') and self.process:
+            if hasattr(self, "process") and self.process:
                 self.stop()
         except Exception:
             pass
@@ -705,14 +742,16 @@ class AsyncWorkerProcess:
     Provides non-blocking communication for LLM operations.
     """
 
-    def __init__(
-        self,
-        idle_timeout: int = WORKER_IDLE_TIMEOUT_SECONDS
-    ):
+    def __init__(self, idle_timeout: int = WORKER_IDLE_TIMEOUT_SECONDS):
         self.idle_timeout = idle_timeout
-        self.process: Optional[asyncio.subprocess.Process] = None
-        self.worker_file: Optional[Path] = None
+        self.process: asyncio.subprocess.Process | None = None
+        self.worker_file: Path | None = None
+
         self._request_count = 0
+        self.tokens_generated = 0
+        self.last_active = 0.0
+        self.start_time = time.time()
+        self.current_task: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
         self._started = False
 
@@ -736,7 +775,12 @@ class AsyncWorkerProcess:
                 # Register for cleanup
                 with _WORKER_PROCESSES_LOCK:
                     # We store the underlying popen object for emergency cleanup
-                    _WORKER_PROCESSES.append(self.process._transport.get_extra_info('subprocess'))
+                    # Access via _transport is an implementation detail
+                    transport = getattr(self.process, "_transport", None)
+                    if transport:
+                        popen_obj = transport.get_extra_info("subprocess")
+                        if popen_obj:
+                            _WORKER_PROCESSES.append(popen_obj)
 
                 # Wait for ready signal (ping -> pong)
                 if not await self._wait_for_ready():
@@ -746,13 +790,16 @@ class AsyncWorkerProcess:
                 raise
             except Exception as e:
                 await self.stop()
-                raise WorkerError(f"Failed to start worker: {e}")
+                raise WorkerError(f"Failed to start worker: {e}") from e
 
             self._started = True
             logger.debug(f"Async worker started (pid={self.process.pid})")
 
     async def _wait_for_ready(self, timeout: float = WORKER_START_TIMEOUT_SECONDS) -> bool:
         """Wait for worker to send ready signal."""
+        if self.process is None or self.process.stdin is None or self.process.stdout is None:
+            return False
+
         try:
             # Send ping
             ping = json.dumps({"operation": "ping", "id": "init"}) + "\n"
@@ -768,14 +815,18 @@ class AsyncWorkerProcess:
         return False
 
     async def send_command(
-        self,
-        command: Dict[str, Any],
-        timeout: float = CRITICAL_TIMEOUT_SECONDS
-    ) -> Dict[str, Any]:
+        self, command: dict[str, Any], timeout: float = CRITICAL_TIMEOUT_SECONDS
+    ) -> dict[str, Any]:
         """Send command and wait for response asynchronously."""
         async with self._lock:
             if not self.process or self.process.returncode is not None:
                 await self.start()
+
+            if self.process is None:
+                raise WorkerError("Async worker process not available after start")
+
+            if self.process.stdin is None or self.process.stdout is None:
+                raise WorkerError("Async worker process IO not available")
 
             req_id = f"async_{os.getpid()}_{id(self)}_{self._request_count}"
             command = command.copy()
@@ -791,7 +842,7 @@ class AsyncWorkerProcess:
                     if not line:
                         raise WorkerError("Worker stdout closed")
 
-                    response = json.loads(line.decode().strip())
+                    response: dict[str, Any] = json.loads(line.decode().strip())
                     if response.get("id") == req_id:
                         self._request_count += 1
 
@@ -805,34 +856,19 @@ class AsyncWorkerProcess:
                 await self.stop()
                 raise WorkerError(f"Async worker failed: {e}") from e
 
-    async def send_streaming_command(
-        self,
-        command: Dict[str, Any],
-        timeout: float = CRITICAL_TIMEOUT_SECONDS
-    ) -> asyncio.Queue:
-        """
-        Send command and return an async queue for chunks.
-
-        Args:
-            command: Command dict
-            timeout: Overall timeout
-
-        Returns:
-            Queue that will receive chunks: {"type": "chunk", "chunk": ...}
-            or {"type": "done"} or {"type": "error"}
-        """
-        # This is a bit complex for a simple queue, let's use a generator instead
-        raise NotImplementedError("Use send_streaming_command_gen")
-
     async def send_streaming_command_gen(
-        self,
-        command: Dict[str, Any],
-        timeout: float = CRITICAL_TIMEOUT_SECONDS
-    ):
+        self, command: dict[str, Any], timeout: float = CRITICAL_TIMEOUT_SECONDS
+    ) -> AsyncGenerator[str, None]:
         """Async generator for streaming responses."""
         async with self._lock:
             if not self.process or self.process.returncode is not None:
                 await self.start()
+
+            if self.process is None:
+                raise WorkerError("Async worker process not available after start")
+
+            if self.process.stdin is None or self.process.stdout is None:
+                raise WorkerError("Async worker process IO not available")
 
             req_id = f"async_stream_{os.getpid()}_{id(self)}_{self._request_count}"
             command = command.copy()
@@ -861,12 +897,32 @@ class AsyncWorkerProcess:
                 await self.stop()
                 raise WorkerError(f"Async streaming failed: {e}") from e
 
+    async def send_streaming_command(
+        self, command: dict[str, Any], timeout: float = CRITICAL_TIMEOUT_SECONDS
+    ) -> asyncio.Queue[str]:
+        """
+        Send command and return an async queue for chunks.
+
+        Note: This method is not implemented. Use send_streaming_command_gen instead.
+
+        Args:
+            command: Command dict
+            timeout: Overall timeout
+
+        Returns:
+            Queue that will receive chunks (not implemented)
+
+        Raises:
+            NotImplementedError: Always - use send_streaming_command_gen instead
+        """
+        raise NotImplementedError("Use send_streaming_command_gen for async streaming")
+
     def _create_worker_file(self) -> None:
         """Create temporary worker script file (reused from sync version logic)."""
         temp_dir = Path(tempfile.gettempdir())
         unique_id = f"async_{os.getpid()}_{time.time_ns()}"
         self.worker_file = temp_dir / f"llm_worker_{unique_id}.py"
-        script = WORKER_SCRIPT.replace('__IDLE_TIMEOUT__', str(self.idle_timeout))
+        script = WORKER_SCRIPT.replace("__IDLE_TIMEOUT__", str(self.idle_timeout))
         self.worker_file.write_text(script, encoding="utf-8")
         self.worker_file.chmod(0o600)
         with _TEMP_FILES_LOCK:
@@ -878,6 +934,17 @@ class AsyncWorkerProcess:
         await self.stop()
         await self.start()
         self._request_count = 0
+
+    async def _handle_stream_chunk(
+        self, chunk_data: dict[str, Any], queue: asyncio.Queue[dict[str, Any]]
+    ) -> None:
+        """Handle a single stream chunk."""
+        # Update stats
+        if "usage" in chunk_data:
+            completion_tokens = chunk_data["usage"].get("completion_tokens", 0)
+            self.tokens_generated += completion_tokens
+
+        await queue.put(chunk_data)
 
     async def stop(self) -> None:
         """Stop worker process asynchronously."""
@@ -912,5 +979,10 @@ class AsyncWorkerProcess:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
         await self.stop()

@@ -2,11 +2,14 @@
 Model registry for managing model metadata and test configurations.
 """
 
+__all__ = ["MetadataTestConfig", "ModelMetadata", "ModelRegistry"]
+
 import json
 import logging
-from dataclasses import dataclass, field
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any
 
 from .exceptions import ModelNotFoundError, ValidationError
 
@@ -20,12 +23,13 @@ REGISTRY_FILE_NAME = "models.json"
 @dataclass(slots=True)
 class MetadataTestConfig:
     """Test configuration from context testing."""
+
     kv_quant: str
     flash_attn: bool
     gpu_layers: int
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MetadataTestConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "MetadataTestConfig":
         """Create from dictionary."""
         return cls(
             kv_quant=data.get("kv_quant", "q4_0"),
@@ -33,7 +37,7 @@ class MetadataTestConfig:
             gpu_layers=data.get("gpu_layers", 0),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "kv_quant": self.kv_quant,
@@ -45,19 +49,20 @@ class MetadataTestConfig:
 @dataclass(slots=True)
 class ContextTest:
     """Context test results from model metadata."""
+
     max_context: int
     recommended_context: int
     buffer_tokens: int
     buffer_percent: int
     tested: bool
     verified_stable: bool
-    error: Optional[str]
+    error: str | None
     test_config: MetadataTestConfig
     timestamp: str
     confidence: float
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ContextTest":
+    def from_dict(cls, data: dict[str, Any]) -> "ContextTest":
         """Create from dictionary."""
         return cls(
             max_context=data.get("max_context", 2048),
@@ -76,6 +81,7 @@ class ContextTest:
 @dataclass(slots=True)
 class ModelCapabilities:
     """Model capabilities."""
+
     chat: bool = True
     embed: bool = False
     vision: bool = False
@@ -84,7 +90,7 @@ class ModelCapabilities:
     tools: bool = False
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ModelCapabilities":
+    def from_dict(cls, data: dict[str, Any]) -> "ModelCapabilities":
         """Create from dictionary."""
         return cls(
             chat=data.get("chat", True),
@@ -99,6 +105,7 @@ class ModelCapabilities:
 @dataclass(slots=True)
 class ModelSpecs:
     """Model technical specifications."""
+
     architecture: str
     quantization: str
     size_label: str
@@ -109,16 +116,16 @@ class ModelSpecs:
     hidden_size: int
     head_count: int
     head_count_kv: int
-    context_test: Optional[ContextTest] = None
-    vocab_size: Optional[int] = None
-    rope_freq_base: Optional[float] = None
-    file_hash: Optional[str] = None
+    context_test: ContextTest | None = None
+    vocab_size: int | None = None
+    rope_freq_base: float | None = None
+    file_hash: str | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ModelSpecs":
+    def from_dict(cls, data: dict[str, Any]) -> "ModelSpecs":
         """Create from dictionary."""
         context_test = None
-        if "context_test" in data and data["context_test"]:
+        if data.get("context_test"):
             context_test = ContextTest.from_dict(data["context_test"])
 
         return cls(
@@ -151,6 +158,7 @@ class ModelMetadata:
         prompt_template: Chat template for formatting
         path: Full path to model file
     """
+
     filename: str
     specs: ModelSpecs
     capabilities: ModelCapabilities
@@ -158,7 +166,7 @@ class ModelMetadata:
     path: str
 
     @classmethod
-    def from_dict(cls, filename: str, data: Dict[str, Any]) -> "ModelMetadata":
+    def from_dict(cls, filename: str, data: dict[str, Any]) -> "ModelMetadata":
         """Create from registry dictionary entry."""
         return cls(
             filename=filename,
@@ -168,14 +176,14 @@ class ModelMetadata:
             path=data.get("path", ""),
         )
 
-    def get_optimal_config(self) -> Dict[str, Any]:
+    def get_optimal_config(self) -> dict[str, Any]:
         """
         Get optimal model configuration from test results.
 
         Returns:
             Dict with recommended n_ctx, flash_attn, gpu_layers, etc
         """
-        config = {}
+        config: dict[str, Any] = {}
 
         if self.specs.context_test and self.specs.context_test.verified_stable:
             # Use tested configuration
@@ -210,7 +218,7 @@ class ModelRegistry:
         """
         self.models_dir = Path(models_dir)
         self.registry_file = self.models_dir / REGISTRY_FILE_NAME
-        self._models: Dict[str, ModelMetadata] = {}
+        self._models: dict[str, ModelMetadata] = {}
 
         if self.registry_file.exists():
             self.load()
@@ -225,7 +233,7 @@ class ModelRegistry:
             ValidationError: If registry file is invalid
         """
         try:
-            with open(self.registry_file, "r", encoding="utf-8") as f:
+            with open(self.registry_file, encoding="utf-8") as f:
                 data = json.load(f)
 
             self._models.clear()
@@ -241,14 +249,16 @@ class ModelRegistry:
 
         except json.JSONDecodeError as e:
             raise ValidationError(
-                f"Invalid JSON in registry file: {e}",
-                {"file": str(self.registry_file)}
-            )
+                f"Invalid JSON in registry file: {e}", {"file": str(self.registry_file)}
+            ) from e
         except OSError as e:
             raise ValidationError(
-                f"Failed to read registry file: {e}",
-                {"file": str(self.registry_file)}
-            )
+                f"Failed to read registry file: {e}", {"file": str(self.registry_file)}
+            ) from e
+
+    def refresh(self) -> None:
+        """Reload registry from disk."""
+        self.load()
 
     def save(self) -> None:
         """
@@ -321,7 +331,7 @@ class ModelRegistry:
 
         logger.info(f"Saved {len(self._models)} models to registry")
 
-    def get(self, filename: str) -> Optional[ModelMetadata]:
+    def get(self, filename: str) -> ModelMetadata | None:
         """
         Get model metadata by filename.
 
@@ -366,11 +376,11 @@ class ModelRegistry:
         if metadata is None:
             raise ModelNotFoundError(
                 f"Model not found in registry: {filename}",
-                {"filename": filename, "available": list(self._models.keys())}
+                {"filename": filename, "available": list(self._models.keys())},
             )
         return metadata
 
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         """
         Get list of all model filenames.
 
@@ -379,12 +389,12 @@ class ModelRegistry:
         """
         return list(self._models.keys())
 
-    def search(self, **criteria) -> List[ModelMetadata]:
+    def search(self, **criteria: Any) -> list[ModelMetadata]:
         """
         Search for models matching criteria.
 
         Args:
-            **criteria: Attributes to match (e.g., reasoning=True)
+            **criteria: Any: Attributes to match (e.g., reasoning=True)
 
         Returns:
             List of matching ModelMetadata
@@ -463,6 +473,6 @@ class ModelRegistry:
         """Check if model is in registry."""
         return self.get(filename) is not None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[ModelMetadata]:
         """Iterate over model metadata."""
         return iter(self._models.values())
