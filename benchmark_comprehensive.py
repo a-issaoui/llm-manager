@@ -194,19 +194,32 @@ class ComprehensiveBenchmark:
         """Test reasoning capability."""
         start = time.time()
         try:
+            # Use higher max_tokens for thinking models
+            max_tokens = 512 if "think" in model.lower() or "nanbeige" in model.lower() else 256
+            
             response = await self.make_request(
                 session,
-                [{"role": "user", "content": "What is 15 + 27? Think step by step."}],
+                [{"role": "user", "content": "Calculate 15 + 27 and give me just the final number."}],
                 model,
-                max_tokens=256,
+                max_tokens=max_tokens,
                 temperature=0.3
             )
             latency = (time.time() - start) * 1000
             usage = response.get("usage", {})
             content = response["choices"][0]["message"].get("content", "")
             
-            # Check if answer contains 42
+            # Check if answer contains 42 (handle various formats)
+            import re
             success = "42" in content
+            
+            # Also check for the answer in a more flexible way
+            if not success:
+                # Look for "15 + 27 = 42" or similar patterns
+                if re.search(r'15\s*\+\s*27\s*=\s*42', content):
+                    success = True
+                # Look for standalone 42
+                elif re.search(r'\b42\b', content):
+                    success = True
             
             return TestResult(
                 test_name="reasoning",
@@ -215,7 +228,7 @@ class ComprehensiveBenchmark:
                 latency_ms=latency,
                 tokens_in=usage.get("prompt_tokens", 0),
                 tokens_out=usage.get("completion_tokens", 0),
-                error=None if success else "Answer doesn't contain expected value"
+                error=None if success else f"Answer doesn't contain '42'. Got: {content[:100]}..."
             )
         except Exception as e:
             return TestResult(

@@ -15,6 +15,13 @@ logger = logging.getLogger(__name__)
 # Pattern to match <tool_call>...</tool_call> blocks
 TOOL_CALL_PATTERN = re.compile(r"<tool_call>\s*(\{.*?})\s*</tool_call>", re.DOTALL)
 
+# Pattern for raw JSON tool calls (models that output JSON directly)
+# Matches: {"name": "func", "arguments": {...}} or {"name": "func", "parameters": {...}}
+TOOL_CALL_JSON_PATTERN = re.compile(
+    r'\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"(?:arguments|parameters)"\s*:\s*(\{[^}]*\})\s*\}',
+    re.DOTALL
+)
+
 # Alternative pattern for models that use different format
 TOOL_CALL_ALT_PATTERN = re.compile(
     r'\{"name":\s*"([^"]+)",\s*"arguments":\s*(\{.*?})}', re.DOTALL
@@ -62,6 +69,24 @@ def parse_tool_calls(content: str) -> tuple[str, list[dict[str, Any]]]:
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse tool call JSON: {e}")
                 continue
+    else:
+        # Try raw JSON format (models that output JSON directly without XML tags)
+        # Look for JSON object with "name" and "arguments" or "parameters"
+        json_match = TOOL_CALL_JSON_PATTERN.search(content)
+        if json_match:
+            try:
+                name = json_match.group(1)
+                args_str = json_match.group(2)
+                args = json.loads(args_str)
+                
+                call_data = {"name": name, "arguments": args}
+                tool_call = _normalize_tool_call(call_data, 0)
+                if tool_call:
+                    tool_calls.append(tool_call)
+                    # Remove the JSON from content
+                    cleaned_content = cleaned_content.replace(json_match.group(0), "")
+            except (json.JSONDecodeError, IndexError) as e:
+                logger.debug(f"Failed to parse raw JSON tool call: {e}")
 
     # Clean up whitespace
     cleaned_content = cleaned_content.strip()
@@ -132,7 +157,13 @@ def has_tool_calls(content: str) -> bool:
     Returns:
         True if content contains tool_call patterns
     """
-    return bool(TOOL_CALL_PATTERN.search(content))
+    # Check for XML format
+    if TOOL_CALL_PATTERN.search(content):
+        return True
+    # Check for raw JSON format
+    if TOOL_CALL_JSON_PATTERN.search(content):
+        return True
+    return False
 
 
 def extract_tool_names(content: str) -> list[str]:
